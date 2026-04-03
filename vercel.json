@@ -1,6 +1,5 @@
 {
   "rewrites": [
-    { "source": "/api/analyze", "destination": "/api/analyze" },
-    { "source": "/(.*)", "destination": "/TenderSense.html" }
+    { "source": "/((?!api/).*)", "destination": "/TenderSense.html" }
   ]
 }
