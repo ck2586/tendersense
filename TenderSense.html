@@ -1,0 +1,1234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TenderSense — Procurement Document Analyzer</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --navy:   #1a3558;
+      --navy2:  #22456e;
+      --blue:   #2563eb;
+      --gold:   #f59e0b;
+      --green:  #10b981;
+      --red:    #ef4444;
+      --orange: #f97316;
+      --purple: #7c3aed;
+      --teal:   #0d9488;
+      --gray50: #f8fafc;
+      --gray100:#f1f5f9;
+      --gray200:#e2e8f0;
+      --gray300:#cbd5e1;
+      --gray400:#94a3b8;
+      --gray500:#64748b;
+      --gray600:#475569;
+      --gray800:#1e293b;
+      --white:  #ffffff;
+      --shadow: 0 2px 12px rgba(0,0,0,0.08);
+      --radius: 10px;
+    }
+    body { font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; background: var(--gray100); color: var(--gray800); min-height: 100vh; }
+
+    /* HEADER */
+    header { background: linear-gradient(135deg, var(--navy) 0%, var(--navy2) 60%, #1e5fa8 100%); color: white; padding: 0 32px; display: flex; align-items: center; justify-content: space-between; height: 68px; box-shadow: 0 4px 16px rgba(0,0,0,0.25); position: sticky; top: 0; z-index: 100; }
+    .header-brand { display: flex; align-items: center; gap: 12px; }
+    .header-icon { width: 38px; height: 38px; background: var(--gold); border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 20px; }
+    .header-title { font-size: 22px; font-weight: 700; letter-spacing: -0.3px; }
+    .header-sub { font-size: 12px; opacity: 0.7; margin-top: 1px; }
+    .header-badge { background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.2); border-radius: 20px; padding: 4px 14px; font-size: 12px; font-weight: 500; }
+
+    /* LAYOUT */
+    .container { max-width: 1100px; margin: 0 auto; padding: 28px 20px; }
+
+    /* SETUP */
+    .setup-grid { display: grid; grid-template-columns: 1fr; gap: 18px; margin-bottom: 20px; }
+    @media (max-width: 680px) { .setup-grid { grid-template-columns: 1fr; } }
+    .card { background: var(--white); border-radius: var(--radius); box-shadow: var(--shadow); padding: 22px 24px; border: 1px solid var(--gray200); }
+    .card-title { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.6px; color: var(--gray600); margin-bottom: 12px; }
+
+    /* DOC TYPE */
+    .doc-type-group { display: flex; gap: 12px; }
+    .doc-type-btn { flex: 1; padding: 14px 10px; border: 2px solid var(--gray200); border-radius: 8px; background: var(--gray50); cursor: pointer; text-align: center; transition: all 0.2s; font-family: inherit; }
+    .doc-type-btn:hover, .doc-type-btn.active { border-color: var(--blue); background: #eff6ff; }
+    .doc-type-btn.active { box-shadow: 0 0 0 3px rgba(37,99,235,0.15); }
+    .doc-type-btn .dt-label { font-size: 18px; font-weight: 700; color: var(--navy); }
+    .doc-type-btn.active .dt-label { color: var(--blue); }
+    .doc-type-btn .dt-name { font-size: 11px; color: var(--gray600); margin-top: 3px; }
+    .doc-type-btn .dt-desc { font-size: 11px; color: var(--gray400); margin-top: 6px; line-height: 1.4; }
+
+    /* API KEY */
+    .api-input-wrap { position: relative; }
+    .api-input { width: 100%; padding: 10px 42px 10px 12px; border: 1px solid var(--gray200); border-radius: 7px; font-size: 14px; font-family: monospace; outline: none; transition: border-color 0.2s; background: var(--gray50); color: var(--gray800); }
+    .api-input:focus { border-color: var(--blue); background: white; }
+    .api-toggle { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); background: none; border: none; cursor: pointer; font-size: 16px; color: var(--gray400); }
+    .api-hint { font-size: 11px; color: var(--gray400); margin-top: 6px; }
+    .api-hint a { color: var(--blue); text-decoration: none; }
+
+    /* UPLOAD */
+    .upload-area { border: 2px dashed var(--gray200); border-radius: var(--radius); padding: 44px 20px; text-align: center; cursor: pointer; transition: all 0.2s; background: var(--white); position: relative; }
+    .upload-area:hover, .upload-area.drag-over { border-color: var(--blue); background: #eff6ff; }
+    .upload-area input[type="file"] { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%; }
+    .upload-icon { font-size: 42px; margin-bottom: 12px; }
+    .upload-title { font-size: 17px; font-weight: 600; color: var(--navy); margin-bottom: 6px; }
+    .upload-sub { font-size: 13px; color: var(--gray600); }
+    .upload-formats { display: flex; gap: 8px; justify-content: center; margin-top: 14px; flex-wrap: wrap; }
+    .fmt-badge { background: var(--gray100); border: 1px solid var(--gray200); border-radius: 5px; padding: 3px 10px; font-size: 11px; font-weight: 600; color: var(--gray600); }
+    .file-selected-info { display: flex; align-items: center; justify-content: center; gap: 10px; background: #ecfdf5; border: 1px solid #6ee7b7; border-radius: 8px; padding: 12px 16px; margin-top: 12px; font-size: 13px; color: #065f46; font-weight: 500; }
+
+    /* ANALYZE BTN */
+    .analyze-btn { width: 100%; padding: 15px; background: linear-gradient(135deg, var(--blue), #1d4ed8); color: white; border: none; border-radius: var(--radius); font-size: 15px; font-weight: 700; cursor: pointer; transition: all 0.2s; letter-spacing: 0.3px; margin-top: 16px; font-family: inherit; display: flex; align-items: center; justify-content: center; gap: 8px; }
+    .analyze-btn:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(37,99,235,0.35); }
+    .analyze-btn:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
+
+    /* PROGRESS */
+    .progress-panel { background: var(--white); border-radius: var(--radius); box-shadow: var(--shadow); padding: 36px 32px; text-align: center; border: 1px solid var(--gray200); }
+    .progress-title { font-size: 18px; font-weight: 700; color: var(--navy); margin-bottom: 6px; }
+    .progress-sub { font-size: 13px; color: var(--gray600); margin-bottom: 28px; }
+    .progress-bar-wrap { background: var(--gray100); border-radius: 20px; height: 8px; overflow: hidden; margin-bottom: 20px; }
+    .progress-bar { height: 100%; background: linear-gradient(90deg, var(--blue), #7c3aed); border-radius: 20px; transition: width 0.5s ease; width: 0%; }
+    .progress-steps { display: flex; flex-direction: column; gap: 10px; text-align: left; max-width: 380px; margin: 0 auto; }
+    .step-item { display: flex; align-items: center; gap: 12px; font-size: 13px; color: var(--gray400); padding: 8px 12px; border-radius: 7px; }
+    .step-item.active { color: var(--blue); background: #eff6ff; font-weight: 500; }
+    .step-item.done { color: var(--green); }
+    .step-dot { width: 22px; height: 22px; border-radius: 50%; flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; background: var(--gray200); color: var(--gray400); }
+    .step-item.active .step-dot { background: var(--blue); color: white; }
+    .step-item.done .step-dot { background: var(--green); color: white; }
+    .spinner { animation: spin 1s linear infinite; display: inline-block; }
+    @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+
+    /* RESULTS HEADER */
+    .results-header { background: linear-gradient(135deg, var(--navy) 0%, var(--navy2) 100%); border-radius: var(--radius); padding: 24px 28px; color: white; margin-bottom: 16px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 16px; }
+    .results-title-group .doc-label { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; opacity: 0.6; }
+    .results-title-group .doc-title { font-size: 20px; font-weight: 700; margin-top: 4px; line-height: 1.3; }
+    .results-title-group .doc-client { font-size: 13px; opacity: 0.8; margin-top: 4px; }
+    .results-meta { display: flex; gap: 20px; flex-wrap: wrap; }
+    .meta-item { text-align: center; }
+    .meta-item .mi-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.8px; opacity: 0.6; }
+    .meta-item .mi-value { font-size: 15px; font-weight: 700; margin-top: 2px; color: var(--gold); }
+
+    /* KEY DATES TIMELINE */
+    .dates-bar { background: white; border-radius: var(--radius); padding: 16px 24px; margin-bottom: 16px; border: 1px solid var(--gray200); box-shadow: var(--shadow); display: flex; gap: 0; overflow-x: auto; }
+    .date-step { flex: 1; min-width: 130px; text-align: center; position: relative; padding: 0 8px; }
+    .date-step:not(:last-child)::after { content: '→'; position: absolute; right: -8px; top: 50%; transform: translateY(-50%); color: var(--gray300); font-size: 18px; }
+    .date-step .ds-icon { font-size: 18px; margin-bottom: 4px; }
+    .date-step .ds-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--gray500); font-weight: 600; }
+    .date-step .ds-date { font-size: 12px; font-weight: 700; color: var(--navy); margin-top: 2px; }
+    .date-step.urgent .ds-date { color: var(--orange); }
+    .date-step.passed .ds-date { color: var(--gray400); }
+
+    /* STATS ROW */
+    .stats-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 16px; }
+    @media (max-width: 720px) { .stats-row { grid-template-columns: repeat(2, 1fr); } }
+    .stat-card { background: white; border-radius: var(--radius); padding: 16px 18px; border: 1px solid var(--gray200); box-shadow: var(--shadow); }
+    .stat-card .sc-val { font-size: 26px; font-weight: 800; line-height: 1; }
+    .stat-card .sc-lbl { font-size: 11px; color: var(--gray500); margin-top: 4px; font-weight: 500; }
+    .stat-card.blue .sc-val { color: var(--blue); }
+    .stat-card.green .sc-val { color: var(--green); }
+    .stat-card.amber .sc-val { color: var(--gold); }
+    .stat-card.purple .sc-val { color: var(--purple); }
+
+    /* EXPORT BAR */
+    .export-bar { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; align-items: center; }
+    .export-bar span { font-size: 13px; color: var(--gray600); margin-right: 4px; }
+
+    /* BUTTONS */
+    .btn { padding: 8px 18px; border-radius: 7px; font-size: 13px; font-weight: 600; cursor: pointer; transition: all 0.2s; font-family: inherit; border: none; display: inline-flex; align-items: center; gap: 6px; }
+    .btn-outline { background: white; border: 1.5px solid var(--gray200); color: var(--gray800); }
+    .btn-outline:hover { border-color: var(--blue); color: var(--blue); }
+    .btn-primary { background: var(--blue); color: white; }
+    .btn-primary:hover { background: #1d4ed8; }
+    .btn-reset { background: var(--gray100); color: var(--gray600); border: 1px solid var(--gray200); }
+    .btn-reset:hover { background: var(--gray200); }
+
+    /* SECTION CARDS */
+    .section-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+    .section-grid.full { grid-template-columns: 1fr; }
+    .section-grid.thirds { grid-template-columns: 1fr 1fr 1fr; }
+    @media (max-width: 720px) { .section-grid, .section-grid.thirds { grid-template-columns: 1fr; } }
+    .section-card { background: var(--white); border-radius: var(--radius); box-shadow: var(--shadow); border: 1px solid var(--gray200); overflow: hidden; }
+    .sc-header { padding: 14px 20px; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid var(--gray200); }
+    .sc-icon { width: 32px; height: 32px; border-radius: 7px; display: flex; align-items: center; justify-content: center; font-size: 16px; }
+    .sc-title { font-size: 14px; font-weight: 700; color: var(--gray800); }
+    .sc-body { padding: 16px 20px; }
+
+    /* Theme colors */
+    .theme-blue .sc-header { background: #eff6ff; } .theme-blue .sc-icon { background: #dbeafe; }
+    .theme-green .sc-header { background: #f0fdf4; } .theme-green .sc-icon { background: #dcfce7; }
+    .theme-amber .sc-header { background: #fffbeb; } .theme-amber .sc-icon { background: #fef3c7; }
+    .theme-purple .sc-header { background: #faf5ff; } .theme-purple .sc-icon { background: #f3e8ff; }
+    .theme-red .sc-header { background: #fef2f2; } .theme-red .sc-icon { background: #fee2e2; }
+    .theme-teal .sc-header { background: #f0fdfa; } .theme-teal .sc-icon { background: #ccfbf1; }
+    .theme-indigo .sc-header { background: #eef2ff; } .theme-indigo .sc-icon { background: #e0e7ff; }
+    .theme-rose .sc-header { background: #fff1f2; } .theme-rose .sc-icon { background: #ffe4e6; }
+
+    /* FIELD ROWS */
+    .field-row { display: flex; justify-content: space-between; align-items: flex-start; padding: 8px 0; border-bottom: 1px solid var(--gray100); gap: 12px; font-size: 13px; }
+    .field-row:last-child { border-bottom: none; }
+    .field-label { color: var(--gray600); font-weight: 500; flex-shrink: 0; min-width: 140px; }
+    .field-value { color: var(--gray800); text-align: right; font-weight: 500; word-break: break-word; }
+    .field-value.highlight { color: var(--blue); font-weight: 700; }
+    .field-value.urgent { color: var(--orange); font-weight: 700; }
+    .field-value.good { color: var(--green); font-weight: 700; }
+    .field-value.na { color: var(--gray400); font-style: italic; }
+
+    /* QCBS WEIGHTS */
+    .weights-display { display: flex; gap: 12px; margin-top: 10px; }
+    .weight-box { flex: 1; text-align: center; padding: 12px 8px; border-radius: 8px; border: 2px solid; }
+    .weight-box.tech { border-color: var(--blue); background: #eff6ff; }
+    .weight-box.fin { border-color: var(--green); background: #f0fdf4; }
+    .weight-box .wb-pct { font-size: 28px; font-weight: 800; }
+    .weight-box.tech .wb-pct { color: var(--blue); }
+    .weight-box.fin .wb-pct { color: var(--green); }
+    .weight-box .wb-label { font-size: 11px; font-weight: 600; color: var(--gray600); text-transform: uppercase; letter-spacing: 0.5px; margin-top: 2px; }
+
+    /* EVAL CRITERIA */
+    .eval-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .eval-table th { text-align: left; padding: 8px 10px; background: var(--gray50); font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--gray600); font-weight: 600; border-bottom: 1px solid var(--gray200); }
+    .eval-table td { padding: 9px 10px; border-bottom: 1px solid var(--gray100); color: var(--gray800); vertical-align: top; }
+    .eval-table tr:last-child td { border-bottom: none; }
+    .score-badge { background: var(--blue); color: white; border-radius: 5px; padding: 2px 8px; font-size: 12px; font-weight: 700; display: inline-block; }
+    .score-badge.amber { background: var(--orange); }
+    .score-badge.green { background: var(--green); }
+    .score-tag { display: inline-block; background: var(--gray100); border: 1px solid var(--gray200); border-radius: 4px; padding: 1px 6px; font-size: 11px; color: var(--gray600); font-weight: 600; }
+    .sub-criteria { margin-top: 5px; display: flex; flex-wrap: wrap; gap: 4px; }
+
+    /* SCOPE */
+    .scope-list { list-style: none; }
+    .scope-list li { display: flex; gap: 8px; padding: 7px 0; border-bottom: 1px solid var(--gray100); font-size: 13px; color: var(--gray800); line-height: 1.5; align-items: flex-start; }
+    .scope-list li:last-child { border-bottom: none; }
+    .scope-list li::before { content: '▸'; color: var(--blue); flex-shrink: 0; margin-top: 1px; font-size: 12px; }
+    .prose { font-size: 13px; color: var(--gray800); line-height: 1.65; }
+    .bg-block { background: var(--gray50); padding: 10px 12px; border-radius: 6px; border-left: 3px solid var(--green); margin-top: 10px; font-size: 12px; color: var(--gray600); line-height: 1.6; }
+
+    /* TEAM TABLE */
+    .team-section-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px; font-weight: 700; padding: 8px 12px; }
+    .team-section-label.core { background: #eff6ff; color: var(--blue); border-bottom: 1px solid var(--gray200); }
+    .team-section-label.non-core { background: #faf5ff; color: var(--purple); border-bottom: 1px solid var(--gray200); border-top: 2px solid var(--gray200); }
+    .team-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+    .team-table th { text-align: left; padding: 8px 10px; background: var(--gray50); font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--gray600); font-weight: 600; border-bottom: 1px solid var(--gray200); }
+    .team-table td { padding: 9px 10px; border-bottom: 1px solid var(--gray100); color: var(--gray800); vertical-align: top; line-height: 1.4; }
+    .team-table tr:last-child td { border-bottom: none; }
+    .position-badge { background: var(--navy); color: white; border-radius: 5px; padding: 3px 8px; font-size: 11px; font-weight: 600; display: inline-block; white-space: nowrap; }
+    .position-badge.non-key { background: var(--purple); }
+    .pm-tag { background: #eff6ff; color: var(--blue); border-radius: 4px; padding: 2px 6px; font-size: 11px; font-weight: 700; display: inline-block; }
+
+    /* DELIVERABLES TABLE */
+    .deliv-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+    .deliv-table th { text-align: left; padding: 8px 10px; background: var(--gray50); font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--gray600); font-weight: 600; border-bottom: 1px solid var(--gray200); }
+    .deliv-table td { padding: 9px 10px; border-bottom: 1px solid var(--gray100); color: var(--gray800); vertical-align: top; line-height: 1.4; font-size: 12.5px; }
+    .deliv-table tr:last-child td { border-bottom: none; }
+    .pct-badge { background: #f0fdf4; color: var(--green); border: 1px solid #a7f3d0; border-radius: 4px; padding: 2px 7px; font-size: 11px; font-weight: 700; display: inline-block; white-space: nowrap; }
+    .time-tag { background: var(--gray100); color: var(--gray600); border-radius: 4px; padding: 2px 6px; font-size: 11px; font-weight: 600; display: inline-block; white-space: nowrap; }
+
+    /* T&C */
+    .tc-item { padding: 10px 0; border-bottom: 1px solid var(--gray100); font-size: 13px; }
+    .tc-item:last-child { border-bottom: none; }
+    .tc-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px; font-weight: 700; color: var(--gray500); margin-bottom: 4px; }
+    .tc-value { color: var(--gray800); line-height: 1.55; }
+    .tc-value.na { color: var(--gray400); font-style: italic; }
+
+    /* HIGHLIGHTS */
+    .highlight-list { display: flex; flex-direction: column; gap: 8px; }
+    .hl-item { display: flex; gap: 10px; align-items: flex-start; background: #fffbeb; border: 1px solid #fde68a; border-radius: 7px; padding: 10px 12px; font-size: 13px; color: var(--gray800); line-height: 1.5; }
+    .hl-item::before { content: '⚑'; color: var(--gold); flex-shrink: 0; font-size: 14px; }
+    .eligibility-list { display: flex; flex-direction: column; gap: 6px; }
+    .el-item { display: flex; gap: 10px; align-items: flex-start; background: #f0fdf4; border: 1px solid #a7f3d0; border-radius: 7px; padding: 9px 12px; font-size: 13px; color: var(--gray800); line-height: 1.5; }
+    .el-item::before { content: '✓'; color: var(--green); flex-shrink: 0; font-weight: 700; }
+
+    /* PROPOSAL PILLS */
+    .pill-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+    .pill { border-radius: 20px; padding: 4px 12px; font-size: 12px; font-weight: 600; }
+    .pill-blue { background: #dbeafe; color: #1e40af; }
+    .pill-green { background: #dcfce7; color: #166534; }
+    .pill-amber { background: #fef3c7; color: #92400e; }
+    .pill-purple { background: #ede9fe; color: #5b21b6; }
+    .pill-gray { background: var(--gray100); color: var(--gray600); border: 1px solid var(--gray200); }
+
+    /* ERROR */
+    .error-panel { background: #fef2f2; border: 1px solid #fecaca; border-radius: var(--radius); padding: 20px 24px; color: #991b1b; font-size: 14px; line-height: 1.5; }
+    .error-panel strong { display: block; margin-bottom: 6px; font-size: 15px; }
+
+    /* UTILITY */
+    .hidden { display: none !important; }
+    .null-val { color: var(--gray400); font-style: italic; font-size: 12px; }
+    .section-label-inline { font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 700; color: var(--gray500); margin-bottom: 8px; margin-top: 14px; display: block; }
+    .section-label-inline:first-child { margin-top: 0; }
+
+    /* PRINT */
+    @media print {
+      header, .setup-panel, .export-bar, .btn-reset, #setup-section, .dates-bar { display: none !important; }
+      body { background: white; }
+      .section-card { box-shadow: none; border: 1px solid #ddd; break-inside: avoid; }
+      .results-header { background: #1a3558 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      .container { padding: 0; max-width: 100%; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="header-brand">
+    <div class="header-icon">📋</div>
+    <div>
+      <div class="header-title">TenderSense</div>
+      <div class="header-sub">Procurement Document Analyzer</div>
+    </div>
+  </div>
+  <div class="header-badge">EOI &amp; RFP Intelligence</div>
+</header>
+
+<div class="container">
+
+  <!-- ===== SETUP ===== -->
+  <div id="setup-section">
+    <div class="setup-grid">
+      <div class="card">
+        <div class="card-title">📄 Document Type</div>
+        <div class="doc-type-group">
+          <button class="doc-type-btn active" onclick="selectDocType('EOI', this)">
+            <div class="dt-label">EoI</div>
+            <div class="dt-name">Expression of Interest</div>
+            <div class="dt-desc">Pre-qualification stage. Firm credentials, experience &amp; capability assessment.</div>
+          </button>
+          <button class="doc-type-btn" onclick="selectDocType('RFP', this)">
+            <div class="dt-label">RfP</div>
+            <div class="dt-name">Request for Proposal</div>
+            <div class="dt-desc">Full proposal with scope, financial bid, detailed T&amp;C &amp; team requirements.</div>
+          </button>
+        </div>
+      </div>
+      <!-- API key is stored securely on the server — no key needed here -->
+    </div>
+    <div class="card" style="margin-bottom:0;">
+      <div class="card-title">📁 Upload Tender Document</div>
+      <div class="upload-area" id="dropZone">
+        <input type="file" id="fileInput" accept=".pdf,.docx" onchange="handleFileSelect(event)" />
+        <div class="upload-icon">📂</div>
+        <div class="upload-title">Drop your document here or click to browse</div>
+        <div class="upload-sub">Supports PDF and Word (.docx) tender documents — handles large multi-section documents</div>
+        <div class="upload-formats"><span class="fmt-badge">PDF</span><span class="fmt-badge">DOCX</span></div>
+      </div>
+      <div id="fileSelectedInfo" class="hidden"></div>
+    </div>
+    <button class="analyze-btn" id="analyzeBtn" onclick="startAnalysis()" disabled>
+      <span>🔍</span> Analyze Document
+    </button>
+    <div id="apiKeyHint" style="display:none; margin-top:10px; background:#fffbeb; border:1px solid #fde68a; border-radius:8px; padding:10px 14px; font-size:13px; color:#92400e;">
+      ⚠️ <strong>API key required</strong> — paste your Google AI key in the field above before analyzing. Get a free key at <a href="https://aistudio.google.com/apikey" target="_blank" style="color:#92400e;">aistudio.google.com/apikey</a>
+    </div>
+    <div id="errorPanel" class="error-panel hidden" style="margin-top:14px;"></div>
+  </div>
+
+  <!-- ===== PROGRESS ===== -->
+  <div id="progress-section" class="hidden">
+    <div class="progress-panel">
+      <div class="progress-title">Analyzing your document…</div>
+      <div class="progress-sub">Gemini AI is reading the tender document and extracting key information</div>
+      <div class="progress-bar-wrap"><div class="progress-bar" id="progressBar"></div></div>
+      <div class="progress-steps" id="progressSteps">
+        <div class="step-item" id="step1"><div class="step-dot">1</div><span>Reading document content</span></div>
+        <div class="step-item" id="step2"><div class="step-dot">2</div><span>Extracting text from document</span></div>
+        <div class="step-item" id="step3"><div class="step-dot">3</div><span>Sending to Gemini AI for analysis</span></div>
+        <div class="step-item" id="step4"><div class="step-dot">4</div><span>Structuring results</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== RESULTS ===== -->
+  <div id="results-section" class="hidden">
+
+    <!-- Header -->
+    <div class="results-header">
+      <div class="results-title-group">
+        <div class="doc-label">Analyzed Document</div>
+        <div class="doc-title" id="resProjectTitle">—</div>
+        <div class="doc-client" id="resClient">—</div>
+      </div>
+      <div class="results-meta">
+        <div class="meta-item"><div class="mi-label">Type</div><div class="mi-value" id="resDocType">—</div></div>
+        <div class="meta-item"><div class="mi-label">Deadline</div><div class="mi-value" id="resDeadline">—</div></div>
+        <div class="meta-item"><div class="mi-label">Selection</div><div class="mi-value" id="resSelection">—</div></div>
+        <div class="meta-item"><div class="mi-label">Duration</div><div class="mi-value" id="resDuration">—</div></div>
+      </div>
+    </div>
+
+    <!-- Key Dates Timeline -->
+    <div class="dates-bar" id="datesBar"></div>
+
+    <!-- Quick Stats -->
+    <div class="stats-row" id="statsRow"></div>
+
+    <!-- Export Bar -->
+    <div class="export-bar">
+      <span>Export:</span>
+      <button class="btn btn-outline" onclick="exportToWord()">📝 Word (.doc)</button>
+      <button class="btn btn-outline" onclick="window.print()">🖨️ Print / PDF</button>
+      <button class="btn btn-reset" onclick="resetApp()" style="margin-left:auto;">↩ Analyze Another</button>
+    </div>
+
+    <!-- Row 1: Procurement + Evaluation -->
+    <div class="section-grid">
+      <div class="section-card theme-blue">
+        <div class="sc-header"><div class="sc-icon">🏢</div><div class="sc-title">Procurement Details</div></div>
+        <div class="sc-body" id="body-procurement"></div>
+      </div>
+      <div class="section-card theme-amber">
+        <div class="sc-header"><div class="sc-icon">⚖️</div><div class="sc-title">Evaluation Framework</div></div>
+        <div class="sc-body" id="body-evaluation"></div>
+      </div>
+    </div>
+
+    <!-- Row 2: Proposal Requirements + Funding -->
+    <div class="section-grid">
+      <div class="section-card theme-indigo" id="card-proposal">
+        <div class="sc-header"><div class="sc-icon">📑</div><div class="sc-title">Proposal Requirements</div></div>
+        <div class="sc-body" id="body-proposal"></div>
+      </div>
+      <div class="section-card theme-teal" id="card-funding">
+        <div class="sc-header"><div class="sc-icon">🏦</div><div class="sc-title">Funding &amp; Project Info</div></div>
+        <div class="sc-body" id="body-funding"></div>
+      </div>
+    </div>
+
+    <!-- Row 3: Eval Criteria Table -->
+    <div class="section-grid full" id="row-criteria">
+      <div class="section-card theme-amber">
+        <div class="sc-header"><div class="sc-icon">📊</div><div class="sc-title">Technical Evaluation Criteria &amp; Sub-criteria</div></div>
+        <div class="sc-body" id="body-criteria" style="padding:0; overflow-x:auto;"></div>
+      </div>
+    </div>
+
+    <!-- Row 4: Objective -->
+    <div class="section-grid full">
+      <div class="section-card theme-green">
+        <div class="sc-header"><div class="sc-icon">🎯</div><div class="sc-title">Objective &amp; Background</div></div>
+        <div class="sc-body" id="body-objective"></div>
+      </div>
+    </div>
+
+    <!-- Row 5: Scope + Project Details -->
+    <div class="section-grid">
+      <div class="section-card theme-green">
+        <div class="sc-header"><div class="sc-icon">📋</div><div class="sc-title">Scope of Work</div></div>
+        <div class="sc-body" id="body-scope"></div>
+      </div>
+      <div class="section-card theme-green">
+        <div class="sc-header"><div class="sc-icon">📅</div><div class="sc-title">Project Details</div></div>
+        <div class="sc-body" id="body-project"></div>
+      </div>
+    </div>
+
+    <!-- Row 6: Team -->
+    <div class="section-grid full">
+      <div class="section-card theme-purple">
+        <div class="sc-header"><div class="sc-icon">👥</div><div class="sc-title">Team Requirements (Core &amp; Non-Core)</div></div>
+        <div id="body-team" style="overflow-x:auto;"></div>
+      </div>
+    </div>
+
+    <!-- Row 7: Deliverables & Payment -->
+    <div class="section-grid full" id="row-deliverables">
+      <div class="section-card theme-teal">
+        <div class="sc-header"><div class="sc-icon">💳</div><div class="sc-title">Deliverables &amp; Payment Schedule</div></div>
+        <div id="body-deliverables" style="overflow-x:auto;"></div>
+      </div>
+    </div>
+
+    <!-- Row 8: Eligibility -->
+    <div class="section-grid full" id="row-eligibility">
+      <div class="section-card theme-rose">
+        <div class="sc-header"><div class="sc-icon">✅</div><div class="sc-title">Eligibility Criteria</div></div>
+        <div class="sc-body" id="body-eligibility"></div>
+      </div>
+    </div>
+
+    <!-- Row 9: T&C -->
+    <div class="section-grid full">
+      <div class="section-card theme-red">
+        <div class="sc-header"><div class="sc-icon">⚖️</div><div class="sc-title">Terms &amp; Conditions — Key Clauses</div></div>
+        <div class="sc-body" id="body-tc"></div>
+      </div>
+    </div>
+
+    <!-- Row 10: Highlights -->
+    <div class="section-grid full" id="row-highlights">
+      <div class="section-card theme-amber">
+        <div class="sc-header"><div class="sc-icon">🚩</div><div class="sc-title">Key Highlights &amp; Flags for Bidders</div></div>
+        <div class="sc-body" id="body-highlights"></div>
+      </div>
+    </div>
+
+  </div><!-- end results -->
+</div><!-- end container -->
+
+<script>
+// ============================================================
+// STATE
+// ============================================================
+let selectedDocType = 'EOI';
+let selectedFile = null;
+let analysisData = null;
+
+pdfjsLib.GlobalWorkerOptions.workerSrc =
+  'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+// ============================================================
+// UI HELPERS
+// ============================================================
+function selectDocType(type, btn) {
+  selectedDocType = type;
+  document.querySelectorAll('.doc-type-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  checkReady();
+}
+
+function show(id) { document.getElementById(id).classList.remove('hidden'); }
+function hide(id) { document.getElementById(id).classList.add('hidden'); }
+function get(id)  { return document.getElementById(id); }
+function setText(id, val) { const el = document.getElementById(id); if (el) el.textContent = val || '—'; }
+function setHTML(id, val) { const el = document.getElementById(id); if (el) el.innerHTML = val; }
+function escHtml(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function hasVal(v) { return v !== null && v !== undefined && v !== '' && v !== 'N/A' && v !== 'Not mentioned' && v !== 'Not specified' && v !== 'n/a'; }
+
+// ============================================================
+// FILE HANDLING
+// ============================================================
+function handleFileSelect(e) { const f = e.target.files[0]; if (f) setFile(f); }
+function setFile(file) {
+  selectedFile = file;
+  const ext = file.name.split('.').pop().toLowerCase();
+  const size = (file.size/1024).toFixed(0);
+  const info = get('fileSelectedInfo');
+  if (ext === 'doc') {
+    info.innerHTML = `<span>⚠️</span> <strong>${escHtml(file.name)}</strong> &nbsp;·&nbsp; ${size} KB &nbsp;·&nbsp; <span style="color:#b45309;">Old .DOC format — please save as .DOCX or PDF first</span>`;
+    info.style.background = '#fffbeb';
+    info.style.borderColor = '#fde68a';
+    info.style.color = '#92400e';
+  } else {
+    info.innerHTML = `<span>✅</span> <strong>${escHtml(file.name)}</strong> &nbsp;·&nbsp; ${size} KB &nbsp;·&nbsp; ${ext.toUpperCase()}`;
+    info.style.background = '';
+    info.style.borderColor = '';
+    info.style.color = '';
+  }
+  info.classList.remove('hidden');
+  checkReady();
+}
+const dropZone = document.getElementById('dropZone');
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault(); dropZone.classList.remove('drag-over');
+  const f = e.dataTransfer.files[0]; if (f) { setFile(f); get('fileInput').files = e.dataTransfer.files; }
+});
+function checkReady() {
+  get('analyzeBtn').disabled = !selectedFile;
+}
+
+// ============================================================
+// TEXT EXTRACTION
+// ============================================================
+async function extractPDFText(file) {
+  const ab = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: ab }).promise;
+  let text = '';
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i);
+    const content = await page.getTextContent();
+    text += content.items.map(item => item.str).join(' ') + '\n';
+  }
+  return text;
+}
+async function extractWordText(file) {
+  const ab = await file.arrayBuffer();
+  const r = await mammoth.extractRawText({ arrayBuffer: ab });
+  return r.value;
+}
+async function extractText(file) {
+  const ext = file.name.split('.').pop().toLowerCase();
+  if (ext === 'pdf') return await extractPDFText(file);
+  if (ext === 'docx') return await extractWordText(file);
+  if (ext === 'doc') throw new Error(
+    'Old-format .doc files are not supported — mammoth.js only reads the modern .docx format. ' +
+    'Please open the file in Word (or Google Docs) and save/export it as .docx or PDF, then re-upload.'
+  );
+  throw new Error('Unsupported file format. Please upload a PDF or Word (.docx) document.');
+}
+
+// ============================================================
+// PROGRESS
+// ============================================================
+function setProgress(pct, activeStep) {
+  get('progressBar').style.width = pct + '%';
+  [1,2,3,4].forEach(n => {
+    const el = get('step' + n);
+    el.classList.remove('active','done');
+    if (n < activeStep) { el.classList.add('done'); el.querySelector('.step-dot').textContent = '✓'; }
+    else if (n === activeStep) { el.classList.add('active'); el.querySelector('.step-dot').innerHTML = '<span class="spinner">⟳</span>'; }
+    else { el.querySelector('.step-dot').textContent = n; }
+  });
+}
+
+// ============================================================
+// GEMINI API — ENHANCED PROMPT
+// ============================================================
+async function analyzeWithGemini(text, docType) {
+  const docTypeFull = docType === 'EOI' ? 'Expression of Interest (EoI)' : 'Request for Proposal (RfP)';
+
+  const MAX_CHARS = 150000;
+  let docText = text;
+  if (text.length > MAX_CHARS) {
+    const c1 = text.substring(0, 55000);
+    const mid = Math.floor(text.length / 2);
+    const c2 = text.substring(mid - 15000, mid + 15000);
+    const c3 = text.substring(text.length - 55000);
+    docText = c1 + '\n\n[...middle section...]\n\n' + c2 + '\n\n[...]\n\n' + c3;
+  }
+
+  const prompt = `You are an expert procurement analyst specializing in government and social sector tenders, with deep familiarity with World Bank, ADB, and bilateral donor procurement procedures.
+
+Analyze the following ${docTypeFull} document and extract ALL key information. Pay special attention to:
+- The DATA SHEET section (usually Section 2E in World Bank RFPs) — this is where actual dates, weights, and criteria scores are specified
+- Individual Key Expert position scores within the evaluation criteria
+- Core vs Non-Core (Key vs Non-Key) team distinction
+- Deliverables linked to payment milestones
+- Funding agency details (World Bank, ADB, etc.)
+
+Return ONLY a valid JSON object — no markdown, no explanation, no code fences.
+
+{
+  "documentSummary": {
+    "documentType": "${docType}",
+    "clientOrganization": "Full legal name of issuing client/implementing agency",
+    "projectTitle": "Title of the assignment/consultancy",
+    "parentProject": "Name of the larger project this falls under (e.g. MPOWER, PMGSY, etc.)",
+    "tenderReferenceNumber": "Full reference/tender number",
+    "issuedDate": "Date document was issued",
+    "prebidQueryDeadline": "Date by which written queries/clarifications must be submitted",
+    "prebidMeetingDate": "Date of pre-bid conference/pre-proposal meeting",
+    "prebidMeetingTime": "Time of pre-bid meeting",
+    "prebidMeetingVenue": "Venue or mode (online/physical) of pre-bid meeting",
+    "submissionDeadline": "Final submission deadline",
+    "submissionTime": "Time of submission deadline (include timezone if mentioned)",
+    "submissionMode": "Hard copy / online portal / email / hybrid — be specific",
+    "submissionAddress": "Physical address or portal/email for submission",
+    "proposalValidity": "Number of days or date until which proposal remains valid",
+    "contactEmail": "Contact email for queries",
+    "contactPhone": "Contact phone"
+  },
+  "fundingInfo": {
+    "financingAgency": "World Bank / ADB / USAID / KfW / bilateral / Government of India / etc.",
+    "loanCreditGrantNumber": "Loan/Credit/Grant number (e.g. P507066, IDA-XXXXX)",
+    "financingType": "Loan / Credit / Grant / Budget",
+    "borrower": "The borrowing government entity",
+    "procurementRegulations": "Which procurement regulations apply (e.g. World Bank Procurement Regulations 6th Ed. Feb 2025)",
+    "currency": "Currency for financial proposal",
+    "taxTreatment": "How taxes are handled (excluded from evaluation, GST reimbursable, etc.)"
+  },
+  "proposalRequirements": {
+    "proposalFormat": "Full Technical Proposal (FTP) / Simplified Technical Proposal (STP)",
+    "contractType": "Lump-Sum / Time-Based / Retainer",
+    "technicalProposalRequired": true,
+    "financialProposalRequired": true,
+    "jointVenturePermitted": true,
+    "subContractingAllowed": true,
+    "languageOfProposal": "English",
+    "numberOfCopies": "Original + N copies or electronic submission",
+    "electronicSubmissionAllowed": false,
+    "statementOfUndertakingRequired": true,
+    "estimatedPersonMonths": "Total person-months of key expert input estimated (e.g. 192 person-months)"
+  },
+  "evaluationFramework": {
+    "isQCBS": true,
+    "selectionMethod": "QCBS / QBS / FBS / LCS / CQS",
+    "technicalWeight": 80,
+    "financialWeight": 20,
+    "minimumTechnicalScore": 75,
+    "technicalEvaluationCriteria": [
+      {
+        "criterionNumber": "i",
+        "criterion": "Adequacy and quality of methodology and work plan",
+        "maxScore": 50,
+        "description": "Brief description of what is evaluated",
+        "subCriteria": [
+          {"name": "Approach and Methodology", "score": 20},
+          {"name": "Work Plan", "score": 20},
+          {"name": "Team Organization and Staffing", "score": 10}
+        ]
+      },
+      {
+        "criterionNumber": "ii",
+        "criterion": "Key Experts' qualifications and competence",
+        "maxScore": 50,
+        "description": "Individual scores per key expert position",
+        "subCriteria": [
+          {"name": "K-1: Senior M&E Specialist & Team Lead", "score": 20},
+          {"name": "K-2: Digital Data & MIS Specialist", "score": 10},
+          {"name": "K-3: Data Analysts (x2)", "score": 20}
+        ]
+      }
+    ],
+    "keyExpertSubCriteriaWeights": "Description of how key expert scores are broken down (e.g. General qualifications 20%, Adequacy 70%, Regional experience 10%)",
+    "financialScoringFormula": "How financial score is calculated (e.g. Sf = 100 x Fm/F)"
+  },
+  "tenderOverview": {
+    "objective": "Clear 2-3 sentence statement of the assignment objective",
+    "background": "Brief background on the program/project context (2-3 sentences)",
+    "scopeOfWork": [
+      "Major deliverable or activity 1",
+      "Major deliverable or activity 2",
+      "Major deliverable or activity 3"
+    ],
+    "projectDuration": "Duration in months or years as stated",
+    "estimatedStartDate": "Anticipated start/commencement date",
+    "projectLocation": "Where the work will be performed",
+    "estimatedContractValue": "Budget, ceiling, or indicative contract value if mentioned",
+    "targetBeneficiaries": "Who benefits from this project (if mentioned)"
+  },
+  "teamRequirements": {
+    "coreTeam": [
+      {
+        "positionCode": "K-1",
+        "position": "Senior M&E Specialist & Team Lead",
+        "isKeyExpert": true,
+        "numberOfPositions": 1,
+        "personMonths": 48,
+        "commitmentLevel": "Full-time / Part-time / Periodic",
+        "educationalQualification": "Doctorate or Postgraduate in Economics, Statistics, Public Policy, or related",
+        "yearsOfExperience": "Minimum 8 years",
+        "specificExperience": "M&E of social sector projects, baseline/midline/endline surveys",
+        "evaluationScore": 20
+      }
+    ],
+    "nonCoreTeam": [
+      {
+        "positionCode": "N-1",
+        "position": "Sampling Specialist",
+        "isKeyExpert": false,
+        "numberOfPositions": 1,
+        "personMonths": 12,
+        "commitmentLevel": "Periodic",
+        "educationalQualification": "Postgraduate in Social Sciences",
+        "yearsOfExperience": "7+ years",
+        "specificExperience": "Participatory research, FGDs, community engagement"
+      }
+    ],
+    "additionalStaffNotes": "Any notes on field staff, enumerators, language requirements, gender requirements"
+  },
+  "deliverablesAndPayments": [
+    {
+      "deliverableNo": 1,
+      "deliverableName": "Inception Report",
+      "timeline": "T + 1 month",
+      "paymentPercentage": "5%",
+      "description": "Brief description of what this deliverable contains"
+    },
+    {
+      "deliverableNo": 2,
+      "deliverableName": "Baseline Instruments and Work Plan",
+      "timeline": "T + 3 months",
+      "paymentPercentage": "10%",
+      "description": "Finalized data collection tools and implementation plan"
+    }
+  ],
+  "eligibilityCriteria": [
+    "Specific eligibility requirement 1",
+    "Specific eligibility requirement 2"
+  ],
+  "termsAndConditions": {
+    "liability": "Summary of liability limitations or caps as stated",
+    "penaltyLiquidatedDamages": "Penalty/LD rates and conditions as stated",
+    "termination": "Termination conditions: by client (X days notice), by consultant (Y days notice), for fraud (Z days)",
+    "insurance": "Required insurance types and coverage amounts",
+    "indemnity": "Indemnity provisions",
+    "conflictOfInterest": "COI restrictions: no conflicting assignments, no procurement role overlap",
+    "paymentTerms": "Payment basis: lump-sum milestone / monthly / time-based; payment timeline after acceptance",
+    "intellectualProperty": "Ownership of deliverables, reports, data",
+    "disputeResolution": "Arbitration / Court / ICC — governing rules",
+    "governingLaw": "Applicable law/jurisdiction",
+    "confidentiality": "Confidentiality obligations and duration",
+    "forceMajeure": "Force majeure definition and consequences",
+    "subContracting": "Rules on sub-contracting (e.g. cannot subcontract whole services)"
+  },
+  "keyHighlights": [
+    "Specific important requirement, flag, or unusual clause bidders must note",
+    "Another critical item"
+  ]
+}
+
+DOCUMENT TO ANALYZE:
+---
+${docText}
+---
+
+Return ONLY the JSON object. No markdown, no explanation.`;
+
+  // Call our own backend — the API key stays safely on the server
+  const response = await fetch('/api/analyze', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text: docText, docType })
+  });
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err.error || `Server error ${response.status}`);
+  }
+
+  return await response.json();
+}
+
+// ============================================================
+// MAIN FLOW
+// ============================================================
+async function startAnalysis() {
+  if (!selectedFile) return;
+  hide('setup-section'); hide('errorPanel'); show('progress-section');
+  try {
+    setProgress(10, 1); await sleep(300);
+    setProgress(25, 2);
+    let text;
+    try { text = await extractText(selectedFile); }
+    catch(e) { throw new Error('Could not read document: ' + e.message); }
+    if (!text || text.trim().length < 100) throw new Error('The document contains very little readable text. It may be a scanned/image-based PDF. Please ensure the PDF has selectable text.');
+    setProgress(45, 3);
+    const data = await analyzeWithGemini(text, selectedDocType);
+    setProgress(88, 4); await sleep(300);
+    analysisData = data;
+    setProgress(100, 4); await sleep(400);
+    hide('progress-section');
+    renderResults(data);
+    show('results-section');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  } catch(err) {
+    hide('progress-section'); show('setup-section');
+    const p = get('errorPanel');
+    let msg = err.message;
+    if (msg.includes('quota') || msg.includes('RESOURCE_EXHAUSTED') || msg.includes('rate') || msg.includes('exceeded')) {
+      msg = 'API quota exceeded. The server\'s Gemini API key has hit its daily free limit. Please try again later, or update the GEMINI_API_KEY in your server environment.';
+    } else if (msg.includes('API_KEY_INVALID') || msg.includes('invalid') && msg.includes('key')) {
+      msg = 'Invalid API key on the server. Please update the GEMINI_API_KEY environment variable with a valid key from aistudio.google.com/apikey.';
+    } else if (msg.includes('Failed to fetch') || msg.includes('NetworkError')) {
+      msg = 'Could not reach the server. Make sure the Node.js server (server.js) is running.';
+    }
+    p.innerHTML = `<strong>⚠️ Analysis Failed</strong><br/>${escHtml(msg)}`;
+    show('errorPanel');
+  }
+}
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+// ============================================================
+// RENDER RESULTS
+// ============================================================
+function renderResults(d) {
+  const ds  = d.documentSummary       || {};
+  const fi  = d.fundingInfo            || {};
+  const pr  = d.proposalRequirements   || {};
+  const ef  = d.evaluationFramework    || {};
+  const to  = d.tenderOverview         || {};
+  const tr  = d.teamRequirements       || {};
+  const core = tr.coreTeam             || [];
+  const nonCore = tr.nonCoreTeam       || [];
+  const dp  = d.deliverablesAndPayments|| [];
+  const tc  = d.termsAndConditions     || {};
+  const hl  = d.keyHighlights          || [];
+  const el  = d.eligibilityCriteria    || [];
+
+  // ---- HEADER ----
+  setText('resProjectTitle', ds.projectTitle || ds.parentProject || 'Tender Document');
+  setText('resClient', ds.clientOrganization ? '🏛 ' + ds.clientOrganization : '');
+  setText('resDocType', ds.documentType || selectedDocType);
+  setText('resDeadline', shortVal(ds.submissionDeadline));
+  setText('resSelection', ef.selectionMethod || (ef.isQCBS ? 'QCBS' : '—'));
+  setText('resDuration', shortVal(to.projectDuration));
+
+  // ---- DATES TIMELINE ----
+  const dates = [
+    { icon: '📢', label: 'Issued', date: ds.issuedDate, cls: 'passed' },
+    { icon: '❓', label: 'Pre-bid Queries By', date: ds.prebidQueryDeadline, cls: 'passed' },
+    { icon: '🤝', label: 'Pre-bid Meeting', date: ds.prebidMeetingDate, cls: '' },
+    { icon: '📨', label: 'Submission Deadline', date: ds.submissionDeadline, cls: 'urgent' },
+    { icon: '🚀', label: 'Expected Start', date: to.estimatedStartDate, cls: '' },
+  ].filter(d => hasVal(d.date));
+  if (dates.length > 0) {
+    get('datesBar').innerHTML = dates.map(d =>
+      `<div class="date-step ${d.cls}">
+        <div class="ds-icon">${d.icon}</div>
+        <div class="ds-label">${d.label}</div>
+        <div class="ds-date">${escHtml(d.date)}</div>
+      </div>`
+    ).join('');
+    show('datesBar');
+  } else {
+    hide('datesBar');
+  }
+
+  // ---- STATS ----
+  const stats = [];
+  if (hasVal(to.projectDuration)) stats.push({ val: to.projectDuration, lbl: 'Project Duration', cls: 'blue' });
+  if (ef.technicalWeight) stats.push({ val: ef.technicalWeight + '%', lbl: 'Technical Weight', cls: 'blue' });
+  if (ef.minimumTechnicalScore) stats.push({ val: ef.minimumTechnicalScore + '%', lbl: 'Min. Tech Score', cls: 'amber' });
+  if (hasVal(pr.estimatedPersonMonths)) stats.push({ val: pr.estimatedPersonMonths, lbl: 'Est. Person-Months', cls: 'green' });
+  const totalTeam = core.length + nonCore.length;
+  if (totalTeam > 0) stats.push({ val: totalTeam + ' roles', lbl: 'Expert Positions', cls: 'purple' });
+  if (dp.length > 0) stats.push({ val: dp.length, lbl: 'Payment Milestones', cls: 'green' });
+  if (hasVal(to.estimatedContractValue)) stats.push({ val: shortVal(to.estimatedContractValue), lbl: 'Contract Value', cls: 'amber' });
+  const colourCls = ['blue','green','amber','purple'];
+  const statsHtml = stats.slice(0,4).map((s,i) => `<div class="stat-card ${s.cls || colourCls[i%4]}"><div class="sc-val">${escHtml(String(s.val))}</div><div class="sc-lbl">${escHtml(s.lbl)}</div></div>`).join('');
+  setHTML('statsRow', statsHtml);
+
+  // ---- PROCUREMENT ----
+  setHTML('body-procurement', `
+    ${fr('Client / Organization', ds.clientOrganization, 'highlight')}
+    ${fr('Project Name', ds.parentProject)}
+    ${fr('Tender Reference No.', ds.tenderReferenceNumber)}
+    ${fr('Date of Issue', ds.issuedDate)}
+    ${fr('Pre-bid Query Deadline', ds.prebidQueryDeadline, 'urgent')}
+    ${fr('Pre-bid Meeting', ds.prebidMeetingDate ? `${ds.prebidMeetingDate}${ds.prebidMeetingTime ? ' | ' + ds.prebidMeetingTime : ''}` : null, 'urgent')}
+    ${fr('Pre-bid Venue', ds.prebidMeetingVenue)}
+    ${fr('Submission Deadline', ds.submissionDeadline ? `${ds.submissionDeadline}${ds.submissionTime ? ' | ' + ds.submissionTime : ''}` : null, 'urgent')}
+    ${fr('Submission Mode', ds.submissionMode)}
+    ${fr('Submission Address', ds.submissionAddress)}
+    ${fr('Proposal Validity', ds.proposalValidity)}
+    ${fr('Contact Email', ds.contactEmail)}
+  `);
+
+  // ---- EVALUATION FRAMEWORK ----
+  let evalHtml = `
+    ${fr('Selection Method', ef.selectionMethod, 'highlight')}
+    ${fr('QCBS Based', ef.isQCBS === true ? 'Yes' : ef.isQCBS === false ? 'No' : null)}
+    ${fr('Min. Qualifying Score (Technical)', ef.minimumTechnicalScore ? ef.minimumTechnicalScore + ' points' : null, 'urgent')}
+  `;
+  if (ef.isQCBS && (ef.technicalWeight || ef.financialWeight)) {
+    evalHtml += `<div class="weights-display">
+      <div class="weight-box tech"><div class="wb-pct">${ef.technicalWeight ?? '?'}%</div><div class="wb-label">Technical</div></div>
+      <div class="weight-box fin"><div class="wb-pct">${ef.financialWeight ?? '?'}%</div><div class="wb-label">Financial</div></div>
+    </div>`;
+  }
+  if (hasVal(ef.financialScoringFormula)) {
+    evalHtml += `<div style="margin-top:12px; background:var(--gray50); padding:8px 10px; border-radius:6px; font-size:12px; color:var(--gray600); border-left:3px solid var(--green);">${escHtml(ef.financialScoringFormula)}</div>`;
+  }
+  if (hasVal(ef.keyExpertSubCriteriaWeights)) {
+    evalHtml += `<div style="margin-top:8px; background:#fffbeb; padding:8px 10px; border-radius:6px; font-size:12px; color:var(--gray700); border-left:3px solid var(--gold);">${escHtml(ef.keyExpertSubCriteriaWeights)}</div>`;
+  }
+  setHTML('body-evaluation', evalHtml);
+
+  // ---- PROPOSAL REQUIREMENTS ----
+  let propHtml = `
+    ${fr('Contract Type', pr.contractType, 'highlight')}
+    ${fr('Proposal Format', pr.proposalFormat)}
+    ${fr('Language', pr.languageOfProposal)}
+    ${fr('Submission of Copies', pr.numberOfCopies)}
+    ${fr('Estimated Key Expert Input', pr.estimatedPersonMonths)}
+    ${fr('Proposal Validity', ds.proposalValidity)}
+  `;
+  const pills = [];
+  if (pr.financialProposalRequired) pills.push({t:'Financial Proposal Required', c:'pill-blue'});
+  if (pr.jointVenturePermitted) pills.push({t:'Joint Venture Permitted', c:'pill-green'});
+  if (pr.subContractingAllowed) pills.push({t:'Sub-contracting Allowed', c:'pill-green'});
+  if (pr.electronicSubmissionAllowed === false) pills.push({t:'No Electronic Submission', c:'pill-gray'});
+  if (pr.statementOfUndertakingRequired) pills.push({t:'Statement of Undertaking Required', c:'pill-amber'});
+  if (pills.length > 0) {
+    propHtml += `<div class="pill-row" style="margin-top:10px;">${pills.map(p => `<span class="pill ${p.c}">${escHtml(p.t)}</span>`).join('')}</div>`;
+  }
+  setHTML('body-proposal', propHtml);
+
+  // ---- FUNDING ----
+  setHTML('body-funding', `
+    ${fr('Financing Agency', fi.financingAgency, 'highlight')}
+    ${fr('Loan / Credit / Grant No.', fi.loanCreditGrantNumber)}
+    ${fr('Financing Type', fi.financingType)}
+    ${fr('Borrower Entity', fi.borrower)}
+    ${fr('Procurement Regulations', fi.procurementRegulations)}
+    ${fr('Financial Proposal Currency', fi.currency)}
+    ${fr('Tax Treatment', fi.taxTreatment)}
+  `);
+
+  // ---- EVAL CRITERIA TABLE ----
+  const criteria = ef.technicalEvaluationCriteria || [];
+  if (criteria.length > 0) {
+    const total = criteria.reduce((s,c) => s + (parseFloat(c.maxScore)||0), 0);
+    let rows = criteria.map(c => {
+      const sc = c.subCriteria || [];
+      const subHtml = sc.length > 0
+        ? `<div class="sub-criteria">${sc.map(s => `<span class="score-tag">${escHtml(s.name)}: <strong>${s.score??'?'}</strong></span>`).join('')}</div>`
+        : '';
+      const score = parseFloat(c.maxScore)||0;
+      const badgeCls = score >= 40 ? '' : score >= 20 ? 'amber' : 'green';
+      return `<tr>
+        <td style="font-size:11px;color:var(--gray500);text-align:center;font-weight:700;">${escHtml(c.criterionNumber||'')}</td>
+        <td><strong>${escHtml(c.criterion)}</strong><br/><span style="font-size:11px;color:var(--gray500);">${escHtml(c.description||'')}</span>${subHtml}</td>
+        <td style="text-align:center;"><span class="score-badge ${badgeCls}">${c.maxScore??'—'}</span></td>
+      </tr>`;
+    }).join('');
+    setHTML('body-criteria', `<table class="eval-table">
+      <thead><tr><th style="width:40px;">#</th><th>Criterion &amp; Sub-criteria</th><th style="width:90px;text-align:center;">Max Score</th></tr></thead>
+      <tbody>${rows}</tbody>
+      <tfoot><tr>
+        <td colspan="2" style="font-weight:700; padding:10px; font-size:13px; border-top:2px solid var(--gray200);">Total Points</td>
+        <td style="border-top:2px solid var(--gray200); text-align:center;"><span class="score-badge">${total||'—'}</span></td>
+      </tr></tfoot>
+    </table>`);
+    show('row-criteria');
+  } else {
+    hide('row-criteria');
+  }
+
+  // ---- OBJECTIVE ----
+  setHTML('body-objective', `
+    ${to.objective ? `<p class="prose">${escHtml(to.objective)}</p>` : '<span class="null-val">Not specified</span>'}
+    ${to.background ? `<div class="bg-block">${escHtml(to.background)}</div>` : ''}
+    ${to.targetBeneficiaries ? `<div style="margin-top:10px;font-size:12px;background:#f0fdf4;padding:8px 12px;border-radius:6px;border-left:3px solid var(--green);color:var(--gray700);">🎯 <strong>Target Beneficiaries:</strong> ${escHtml(to.targetBeneficiaries)}</div>` : ''}
+  `);
+
+  // ---- SCOPE ----
+  const scope = to.scopeOfWork || [];
+  setHTML('body-scope', scope.length > 0
+    ? `<ul class="scope-list">${scope.map(s => `<li><span class="prose">${escHtml(s)}</span></li>`).join('')}</ul>`
+    : '<span class="null-val">Not specified</span>');
+
+  // ---- PROJECT DETAILS ----
+  setHTML('body-project', `
+    ${fr('Duration', to.projectDuration, 'highlight')}
+    ${fr('Estimated Start Date', to.estimatedStartDate)}
+    ${fr('Location', to.projectLocation)}
+    ${fr('Contract Value / Budget', to.estimatedContractValue, 'good')}
+    ${fr('Financing Agency', fi.financingAgency)}
+    ${fr('Contract Type', pr.contractType)}
+  `);
+
+  // ---- TEAM ----
+  let teamHtml = '';
+  if (core.length > 0) {
+    teamHtml += `<div class="team-section-label core">🔵 Core Team (Key Experts) — Evaluated in Technical Proposal</div>`;
+    teamHtml += `<table class="team-table"><thead><tr><th>Code</th><th>Position</th><th>Qualification</th><th>Experience</th><th>PM</th><th>No.</th><th>Score</th></tr></thead><tbody>`;
+    teamHtml += core.map(t => `<tr>
+      <td><span style="font-weight:700;color:var(--blue);">${escHtml(t.positionCode||'—')}</span></td>
+      <td><span class="position-badge">${escHtml(t.position||'—')}</span></td>
+      <td style="font-size:12px;">${escHtml(t.educationalQualification||'—')}</td>
+      <td style="font-size:12px;">${escHtml(t.specificExperience||t.yearsOfExperience||'—')}</td>
+      <td style="text-align:center;"><span class="pm-tag">${escHtml(String(t.personMonths||'—'))}</span></td>
+      <td style="text-align:center;">${escHtml(String(t.numberOfPositions||1))}</td>
+      <td style="text-align:center;">${t.evaluationScore ? `<span class="score-badge">${t.evaluationScore}</span>` : '<span class="null-val">—</span>'}</td>
+    </tr>`).join('');
+    teamHtml += `</tbody></table>`;
+  }
+  if (nonCore.length > 0) {
+    teamHtml += `<div class="team-section-label non-core">🟣 Non-Core Team (Non-Key Experts) — Not Evaluated but Required</div>`;
+    teamHtml += `<table class="team-table"><thead><tr><th>Code</th><th>Position</th><th>Qualification</th><th>Experience</th><th>PM</th><th>No.</th></tr></thead><tbody>`;
+    teamHtml += nonCore.map(t => `<tr>
+      <td><span style="font-weight:700;color:var(--purple);">${escHtml(t.positionCode||'—')}</span></td>
+      <td><span class="position-badge non-key">${escHtml(t.position||'—')}</span></td>
+      <td style="font-size:12px;">${escHtml(t.educationalQualification||'—')}</td>
+      <td style="font-size:12px;">${escHtml(t.specificExperience||t.yearsOfExperience||'—')}</td>
+      <td style="text-align:center;"><span class="pm-tag">${escHtml(String(t.personMonths||'—'))}</span></td>
+      <td style="text-align:center;">${escHtml(String(t.numberOfPositions||1))}</td>
+    </tr>`).join('');
+    teamHtml += `</tbody></table>`;
+  }
+  if (hasVal(tr.additionalStaffNotes)) {
+    teamHtml += `<div style="padding:12px 16px; font-size:12px; color:var(--gray600); background:var(--gray50); border-top:1px solid var(--gray200);">📝 ${escHtml(tr.additionalStaffNotes)}</div>`;
+  }
+  if (!teamHtml) teamHtml = '<div style="padding:16px 20px;"><span class="null-val">Team requirements not specified</span></div>';
+  setHTML('body-team', teamHtml);
+
+  // ---- DELIVERABLES & PAYMENT ----
+  if (dp.length > 0) {
+    const totalPct = dp.reduce((s,d) => {
+      const m = String(d.paymentPercentage||'').match(/[\d.]+/);
+      return s + (m ? parseFloat(m[0]) : 0);
+    }, 0);
+    let delivHtml = `<table class="deliv-table"><thead><tr><th>#</th><th>Deliverable</th><th>Timeline</th><th>Payment</th></tr></thead><tbody>`;
+    delivHtml += dp.map(d => `<tr>
+      <td style="text-align:center;font-weight:700;color:var(--gray500);">${escHtml(String(d.deliverableNo||''))}</td>
+      <td><strong>${escHtml(d.deliverableName||'—')}</strong>${d.description ? `<br/><span style="font-size:11px;color:var(--gray500);">${escHtml(d.description)}</span>` : ''}</td>
+      <td><span class="time-tag">${escHtml(d.timeline||'—')}</span></td>
+      <td><span class="pct-badge">${escHtml(d.paymentPercentage||'—')}</span></td>
+    </tr>`).join('');
+    delivHtml += `</tbody><tfoot><tr>
+      <td colspan="3" style="font-weight:700;padding:10px;font-size:13px;border-top:2px solid var(--gray200);">Total</td>
+      <td style="border-top:2px solid var(--gray200);"><span class="pct-badge">${totalPct > 0 ? totalPct + '%' : '—'}</span></td>
+    </tr></tfoot></table>`;
+    setHTML('body-deliverables', delivHtml);
+    show('row-deliverables');
+  } else {
+    hide('row-deliverables');
+  }
+
+  // ---- ELIGIBILITY ----
+  if (el.length > 0) {
+    setHTML('body-eligibility', `<div class="eligibility-list">${el.map(e => `<div class="el-item">${escHtml(e)}</div>`).join('')}</div>`);
+    show('row-eligibility');
+  } else {
+    hide('row-eligibility');
+  }
+
+  // ---- T&C ----
+  const tcDefs = [
+    { lbl: '⚠️ Liability', key: 'liability' },
+    { lbl: '🔴 Penalty / Liquidated Damages', key: 'penaltyLiquidatedDamages' },
+    { lbl: '🚪 Termination', key: 'termination' },
+    { lbl: '🛡 Insurance', key: 'insurance' },
+    { lbl: '⚖️ Indemnity', key: 'indemnity' },
+    { lbl: '🚫 Conflict of Interest', key: 'conflictOfInterest' },
+    { lbl: '💳 Payment Terms', key: 'paymentTerms' },
+    { lbl: '📄 Intellectual Property', key: 'intellectualProperty' },
+    { lbl: '🏛 Dispute Resolution', key: 'disputeResolution' },
+    { lbl: '🌍 Governing Law', key: 'governingLaw' },
+    { lbl: '🔒 Confidentiality', key: 'confidentiality' },
+    { lbl: '🌪 Force Majeure', key: 'forceMajeure' },
+    { lbl: '🔗 Sub-contracting', key: 'subContracting' },
+  ];
+  setHTML('body-tc', tcDefs.map(item => {
+    const v = tc[item.key];
+    const ok = hasVal(v);
+    return `<div class="tc-item"><div class="tc-label">${item.lbl}</div><div class="tc-value${ok ? '' : ' na'}">${ok ? escHtml(v) : 'Not specified in the document'}</div></div>`;
+  }).join(''));
+
+  // ---- HIGHLIGHTS ----
+  if (hl.length > 0) {
+    setHTML('body-highlights', `<div class="highlight-list">${hl.map(h => `<div class="hl-item">${escHtml(h)}</div>`).join('')}</div>`);
+    show('row-highlights');
+  } else {
+    hide('row-highlights');
+  }
+}
+
+// helpers
+function fr(label, value, cls) {
+  const ok = hasVal(value);
+  return `<div class="field-row"><span class="field-label">${escHtml(label)}</span><span class="field-value${ok ? (cls ? ' '+cls : '') : ' na'}">${ok ? escHtml(String(value)) : '—'}</span></div>`;
+}
+function shortVal(v) {
+  if (!hasVal(v)) return '—';
+  return String(v).length > 30 ? String(v).substring(0, 30) + '…' : String(v);
+}
+
+// ============================================================
+// RESET
+// ============================================================
+function resetApp() {
+  selectedFile = null; analysisData = null;
+  get('fileInput').value = '';
+  get('fileSelectedInfo').classList.add('hidden');
+  get('analyzeBtn').disabled = true;
+  get('errorPanel').classList.add('hidden');
+  hide('results-section'); hide('progress-section'); show('setup-section');
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+// ============================================================
+// EXPORT TO WORD
+// ============================================================
+function exportToWord() {
+  if (!analysisData) return;
+  const d = analysisData;
+  const ds = d.documentSummary || {};
+  const fi = d.fundingInfo || {};
+  const pr = d.proposalRequirements || {};
+  const ef = d.evaluationFramework || {};
+  const to = d.tenderOverview || {};
+  const tr = d.teamRequirements || {};
+  const core = tr.coreTeam || [];
+  const nonCore = tr.nonCoreTeam || [];
+  const dp = d.deliverablesAndPayments || [];
+  const tc = d.termsAndConditions || {};
+  const hl = d.keyHighlights || [];
+  const el = d.eligibilityCriteria || [];
+
+  function row2(l, v) {
+    const ok = hasVal(v);
+    return `<tr><td style="padding:6px 10px;font-weight:600;color:#475569;width:200px;border:1px solid #e2e8f0;background:#f8fafc;">${l}</td><td style="padding:6px 10px;border:1px solid #e2e8f0;">${ok ? v : '<em style="color:#94a3b8;">Not specified</em>'}</td></tr>`;
+  }
+  function head(t) { return `<h2 style="font-family:Calibri,sans-serif;color:#1a3558;font-size:14pt;margin:20px 0 8px;border-bottom:2px solid #f59e0b;padding-bottom:4px;">${t}</h2>`; }
+
+  const criteriaHtml = (ef.technicalEvaluationCriteria||[]).length > 0 ?
+    `<table style="width:100%;border-collapse:collapse;font-size:11pt;">
+      <tr style="background:#1a3558;color:white;"><th style="padding:8px;border:1px solid #ddd;">Criterion</th><th style="padding:8px;border:1px solid #ddd;">Sub-criteria</th><th style="padding:8px;text-align:center;border:1px solid #ddd;">Max Score</th></tr>
+      ${(ef.technicalEvaluationCriteria||[]).map(c => `<tr>
+        <td style="padding:7px 8px;border:1px solid #ddd;font-weight:600;">${c.criterion||''}</td>
+        <td style="padding:7px 8px;border:1px solid #ddd;font-size:10pt;">${(c.subCriteria||[]).map(s => `${s.name}: ${s.score||'?'}`).join(' | ') || (c.description||'')}</td>
+        <td style="padding:7px 8px;border:1px solid #ddd;text-align:center;font-weight:700;">${c.maxScore||''}</td>
+      </tr>`).join('')}
+    </table>` : '<em style="color:#94a3b8;">Not specified</em>';
+
+  const teamHtml = core.length > 0 ?
+    `<p style="font-weight:700;color:#2563eb;margin:8px 0 4px;">Core Team (Key Experts)</p>
+    <table style="width:100%;border-collapse:collapse;font-size:10pt;">
+      <tr style="background:#1a3558;color:white;"><th style="padding:7px;border:1px solid #ddd;">Code</th><th style="padding:7px;border:1px solid #ddd;">Position</th><th style="padding:7px;border:1px solid #ddd;">Qualification</th><th style="padding:7px;border:1px solid #ddd;">Experience</th><th style="padding:7px;border:1px solid #ddd;">PM</th><th style="padding:7px;border:1px solid #ddd;">Score</th></tr>
+      ${core.map(t => `<tr><td style="padding:6px;border:1px solid #ddd;text-align:center;font-weight:700;">${t.positionCode||''}</td><td style="padding:6px;border:1px solid #ddd;font-weight:600;">${t.position||''}</td><td style="padding:6px;border:1px solid #ddd;">${t.educationalQualification||''}</td><td style="padding:6px;border:1px solid #ddd;">${t.specificExperience||t.yearsOfExperience||''}</td><td style="padding:6px;border:1px solid #ddd;text-align:center;">${t.personMonths||''}</td><td style="padding:6px;border:1px solid #ddd;text-align:center;font-weight:700;">${t.evaluationScore||'—'}</td></tr>`).join('')}
+    </table>
+    ${nonCore.length > 0 ? `<p style="font-weight:700;color:#7c3aed;margin:12px 0 4px;">Non-Core Team (Non-Key Experts)</p>
+    <table style="width:100%;border-collapse:collapse;font-size:10pt;">
+      <tr style="background:#5b21b6;color:white;"><th style="padding:7px;border:1px solid #ddd;">Code</th><th style="padding:7px;border:1px solid #ddd;">Position</th><th style="padding:7px;border:1px solid #ddd;">Qualification</th><th style="padding:7px;border:1px solid #ddd;">Experience</th><th style="padding:7px;border:1px solid #ddd;">PM</th></tr>
+      ${nonCore.map(t => `<tr><td style="padding:6px;border:1px solid #ddd;text-align:center;font-weight:700;">${t.positionCode||''}</td><td style="padding:6px;border:1px solid #ddd;font-weight:600;">${t.position||''}</td><td style="padding:6px;border:1px solid #ddd;">${t.educationalQualification||''}</td><td style="padding:6px;border:1px solid #ddd;">${t.specificExperience||t.yearsOfExperience||''}</td><td style="padding:6px;border:1px solid #ddd;text-align:center;">${t.personMonths||''}</td></tr>`).join('')}
+    </table>` : ''}` : '<em style="color:#94a3b8;">Not specified</em>';
+
+  const delivHtml = dp.length > 0 ?
+    `<table style="width:100%;border-collapse:collapse;font-size:10pt;">
+      <tr style="background:#1a3558;color:white;"><th style="padding:7px;border:1px solid #ddd;">#</th><th style="padding:7px;border:1px solid #ddd;">Deliverable</th><th style="padding:7px;border:1px solid #ddd;">Timeline</th><th style="padding:7px;border:1px solid #ddd;">Payment %</th></tr>
+      ${dp.map(d => `<tr><td style="padding:6px;border:1px solid #ddd;text-align:center;font-weight:700;">${d.deliverableNo||''}</td><td style="padding:6px;border:1px solid #ddd;font-weight:600;">${d.deliverableName||''}</td><td style="padding:6px;border:1px solid #ddd;">${d.timeline||''}</td><td style="padding:6px;border:1px solid #ddd;font-weight:700;color:#166534;">${d.paymentPercentage||''}</td></tr>`).join('')}
+    </table>` : '<em style="color:#94a3b8;">Not specified</em>';
+
+  const tcDefs = [
+    ['Liability', tc.liability], ['Penalty / Liquidated Damages', tc.penaltyLiquidatedDamages],
+    ['Termination', tc.termination], ['Insurance', tc.insurance], ['Indemnity', tc.indemnity],
+    ['Conflict of Interest', tc.conflictOfInterest], ['Payment Terms', tc.paymentTerms],
+    ['Intellectual Property', tc.intellectualProperty], ['Dispute Resolution', tc.disputeResolution],
+    ['Governing Law', tc.governingLaw], ['Confidentiality', tc.confidentiality],
+    ['Force Majeure', tc.forceMajeure], ['Sub-contracting', tc.subContracting],
+  ];
+
+  const html = `<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
+  <head><meta charset="utf-8"><title>TenderSense Analysis</title></head>
+  <body style="font-family:Calibri,sans-serif;font-size:11pt;color:#1e293b;margin:40px;">
+  <div style="background:#1a3558;color:white;padding:20px 24px;margin-bottom:24px;">
+    <div style="font-size:9pt;opacity:0.7;text-transform:uppercase;letter-spacing:1px;">TenderSense Analysis Report</div>
+    <div style="font-size:18pt;font-weight:700;margin-top:4px;">${ds.projectTitle||'Tender Analysis'}</div>
+    <div style="font-size:11pt;opacity:0.8;margin-top:4px;">${ds.clientOrganization||''}</div>
+    <div style="margin-top:10px;font-size:10pt;opacity:0.7;">Type: ${ds.documentType||selectedDocType} &nbsp;|&nbsp; Selection: ${ef.selectionMethod||'—'} &nbsp;|&nbsp; Generated by TenderSense</div>
+  </div>
+  ${head('📋 Procurement Details')}
+  <table style="width:100%;border-collapse:collapse;font-size:11pt;">
+    ${row2('Client', ds.clientOrganization)}${row2('Project', ds.parentProject)}${row2('Tender Ref.', ds.tenderReferenceNumber)}${row2('Pre-bid Query Deadline', ds.prebidQueryDeadline)}${row2('Pre-bid Meeting', ds.prebidMeetingDate ? `${ds.prebidMeetingDate} ${ds.prebidMeetingTime||''}`.trim() : null)}${row2('Submission Deadline', ds.submissionDeadline ? `${ds.submissionDeadline} ${ds.submissionTime||''}`.trim() : null)}${row2('Submission Mode', ds.submissionMode)}${row2('Submission Address', ds.submissionAddress)}${row2('Proposal Validity', ds.proposalValidity)}
+  </table>
+  ${head('🏦 Funding & Proposal Info')}
+  <table style="width:100%;border-collapse:collapse;font-size:11pt;">
+    ${row2('Financing Agency', fi.financingAgency)}${row2('Loan/Grant No.', fi.loanCreditGrantNumber)}${row2('Contract Type', pr.contractType)}${row2('Proposal Format', pr.proposalFormat)}${row2('Est. Person-Months', pr.estimatedPersonMonths)}${row2('Currency', fi.currency)}${row2('Tax Treatment', fi.taxTreatment)}
+  </table>
+  ${head('⚖️ Evaluation Framework')}
+  <table style="width:100%;border-collapse:collapse;font-size:11pt;">
+    ${row2('Selection Method', ef.selectionMethod)}${row2('QCBS', ef.isQCBS===true?'Yes':ef.isQCBS===false?'No':null)}${row2('Technical Weight', ef.technicalWeight?ef.technicalWeight+'%':null)}${row2('Financial Weight', ef.financialWeight?ef.financialWeight+'%':null)}${row2('Min. Technical Score', ef.minimumTechnicalScore?ef.minimumTechnicalScore+' points':null)}
+  </table>
+  ${head('📊 Evaluation Criteria')}${criteriaHtml}
+  ${head('🎯 Objective & Background')}
+  <p style="line-height:1.6;">${to.objective||''}</p>
+  ${to.background?`<p style="line-height:1.6;color:#475569;margin-top:8px;">${to.background}</p>`:''}
+  ${head('📋 Scope of Work')}
+  <ul style="margin:0;padding-left:20px;line-height:1.7;">${(to.scopeOfWork||[]).map(s=>`<li>${s}</li>`).join('')}</ul>
+  ${head('📅 Project Details')}
+  <table style="width:100%;border-collapse:collapse;font-size:11pt;">
+    ${row2('Duration', to.projectDuration)}${row2('Start Date', to.estimatedStartDate)}${row2('Location', to.projectLocation)}${row2('Contract Value', to.estimatedContractValue)}
+  </table>
+  ${head('👥 Team Requirements')}${teamHtml}
+  ${dp.length > 0 ? head('💳 Deliverables & Payment Schedule') + delivHtml : ''}
+  ${el.length > 0 ? head('✅ Eligibility Criteria') + `<ul style="margin:0;padding-left:20px;line-height:1.7;">${el.map(e=>`<li>${e}</li>`).join('')}</ul>` : ''}
+  ${head('⚖️ Terms & Conditions')}
+  <table style="width:100%;border-collapse:collapse;font-size:11pt;">${tcDefs.map(([l,v])=>row2(l,v)).join('')}</table>
+  ${hl.length > 0 ? head('🚩 Key Highlights') + `<ul style="margin:0;padding-left:20px;line-height:1.7;">${hl.map(h=>`<li><strong>${h}</strong></li>`).join('')}</ul>` : ''}
+  <p style="margin-top:30px;font-size:9pt;color:#94a3b8;text-align:center;border-top:1px solid #e2e8f0;padding-top:12px;">Generated by TenderSense — Procurement Document Analyzer</p>
+  </body></html>`;
+
+  const blob = new Blob([html], { type: 'application/msword' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `TenderSense_${(ds.projectTitle||'Analysis').replace(/[^a-zA-Z0-9]/g,'_').substring(0,40)}.doc`;
+  document.body.appendChild(a); a.click();
+  document.body.removeChild(a); URL.revokeObjectURL(url);
+}
+</script>
+</body>
+</html>

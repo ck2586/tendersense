@@ -1,0 +1,16 @@
+{
+  "name": "tendersense",
+  "version": "1.0.0",
+  "description": "AI-powered procurement document analyzer",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
