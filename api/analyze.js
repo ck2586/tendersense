@@ -1,4 +1,4 @@
-// v2 - Groq
+// v3 - Groq with correct nested JSON structure
 // TenderSense — Vercel Serverless Function
 // POST /api/analyze  { text: string, docType: "EOI"|"RFP" }
 
@@ -54,61 +54,141 @@ module.exports = async function handler(req, res) {
 
   const docTypeFull = docType === 'EOI' ? 'Expression of Interest (EoI)' : 'Request for Proposal (RfP)';
 
-  const prompt = `You are an expert procurement analyst. Analyze this ${docTypeFull} document and extract ALL key information. Return ONLY a valid JSON object with this exact structure (use null for fields not found):
+  const prompt = `You are an expert procurement analyst. Analyze this ${docTypeFull} document and extract ALL key information. Return ONLY a valid JSON object with this exact nested structure (use null for fields not found):
 
 {
-  "documentType": "${docType}",
-  "title": "exact document title",
-  "clientOrganization": "issuing organization name",
-  "projectName": "project/programme name",
-  "referenceNumber": "tender/reference number",
-  "country": "country",
-  "sector": "primary sector (Health/Education/Agriculture/etc.)",
-  "fundingSource": "donor/funder name",
-  "currency": "currency code (USD/EUR/etc.)",
-  "estimatedBudget": "budget amount as string or null",
-  "contractDuration": "e.g. 12 months",
-  "contractType": "Lump Sum / Time-Based / Retainer",
-  "submissionDeadline": "exact date and time with timezone",
-  "questionDeadline": "deadline to submit clarification questions",
-  "expectedStartDate": "project start date",
-  "publishedDate": "date document was issued",
-  "language": "submission language",
-  "eligibility": {
-    "firmType": "individual/firm/consortium/NGO",
-    "nationality": "nationality restrictions",
-    "experience": "minimum experience requirements",
-    "turnover": "minimum annual turnover",
-    "staffRequirements": "key personnel required",
-    "certifications": "required certifications",
-    "jointVenture": "JV/consortium rules"
+  "documentSummary": {
+    "documentType": "${docType}",
+    "clientOrganization": "Full legal name of issuing client/implementing agency",
+    "projectTitle": "Title of the assignment/consultancy",
+    "parentProject": "Name of the larger project this falls under",
+    "tenderReferenceNumber": "Full reference/tender number",
+    "issuedDate": "Date document was issued",
+    "prebidQueryDeadline": "Date by which written queries must be submitted",
+    "prebidMeetingDate": "Date of pre-bid conference/pre-proposal meeting",
+    "prebidMeetingTime": "Time of pre-bid meeting",
+    "prebidMeetingVenue": "Venue or mode of pre-bid meeting",
+    "submissionDeadline": "Final submission deadline date",
+    "submissionTime": "Time of submission deadline",
+    "submissionMode": "Hard copy / online portal / email / hybrid",
+    "submissionAddress": "Physical address or portal/email for submission",
+    "proposalValidity": "Number of days or date until which proposal remains valid",
+    "contactEmail": "Contact email for queries",
+    "contactPhone": "Contact phone"
   },
-  "selectionMethod": "QCBS / QBS / FBS / LCS / CQS / SSS / other",
-  "technicalWeight": null,
-  "financialWeight": null,
-  "evaluationCriteria": [
-    { "criterion": "criterion name", "weight": null, "subCriteria": ["sub1", "sub2"] }
+  "fundingInfo": {
+    "financingAgency": "World Bank / ADB / USAID / Government / etc.",
+    "loanCreditGrantNumber": "Loan/Credit/Grant number",
+    "financingType": "Loan / Credit / Grant / Budget",
+    "borrower": "The borrowing government entity",
+    "procurementRegulations": "Which procurement regulations apply",
+    "currency": "Currency for financial proposal",
+    "taxTreatment": "How taxes are handled"
+  },
+  "proposalRequirements": {
+    "proposalFormat": "Full Technical Proposal / Simplified Technical Proposal",
+    "contractType": "Lump-Sum / Time-Based / Retainer",
+    "technicalProposalRequired": true,
+    "financialProposalRequired": true,
+    "jointVenturePermitted": null,
+    "subContractingAllowed": null,
+    "languageOfProposal": "English",
+    "numberOfCopies": "Original + N copies or electronic submission",
+    "electronicSubmissionAllowed": null,
+    "estimatedPersonMonths": "Total person-months of key expert input estimated"
+  },
+  "evaluationFramework": {
+    "isQCBS": null,
+    "selectionMethod": "QCBS / QBS / FBS / LCS / CQS",
+    "technicalWeight": null,
+    "financialWeight": null,
+    "minimumTechnicalScore": null,
+    "technicalEvaluationCriteria": [
+      {
+        "criterionNumber": "i",
+        "criterion": "criterion name",
+        "maxScore": null,
+        "description": "brief description",
+        "subCriteria": [
+          {"name": "sub-criterion name", "score": null}
+        ]
+      }
+    ],
+    "keyExpertSubCriteriaWeights": "Description of how key expert scores are broken down",
+    "financialScoringFormula": "How financial score is calculated"
+  },
+  "tenderOverview": {
+    "objective": "Clear 2-3 sentence statement of the assignment objective",
+    "background": "Brief background on the program/project context",
+    "scopeOfWork": ["Major activity or deliverable 1", "Major activity or deliverable 2"],
+    "projectDuration": "Duration in months or years as stated",
+    "estimatedStartDate": "Anticipated start date",
+    "projectLocation": "Where the work will be performed",
+    "estimatedContractValue": "Budget or indicative contract value if mentioned",
+    "targetBeneficiaries": "Who benefits from this project"
+  },
+  "teamRequirements": {
+    "coreTeam": [
+      {
+        "positionCode": "K-1",
+        "position": "Position title",
+        "isKeyExpert": true,
+        "numberOfPositions": 1,
+        "personMonths": null,
+        "commitmentLevel": "Full-time / Part-time / Periodic",
+        "educationalQualification": "Required education",
+        "yearsOfExperience": "Minimum years",
+        "specificExperience": "Specific experience required",
+        "evaluationScore": null
+      }
+    ],
+    "nonCoreTeam": [
+      {
+        "positionCode": "N-1",
+        "position": "Position title",
+        "isKeyExpert": false,
+        "numberOfPositions": 1,
+        "personMonths": null,
+        "commitmentLevel": "Periodic",
+        "educationalQualification": "Required education",
+        "yearsOfExperience": "Minimum years",
+        "specificExperience": "Specific experience required"
+      }
+    ],
+    "additionalStaffNotes": "Any notes on field staff, language requirements, gender requirements"
+  },
+  "deliverablesAndPayments": [
+    {
+      "deliverableNo": 1,
+      "deliverableName": "Deliverable name",
+      "timeline": "Timeline as stated",
+      "paymentPercentage": "Payment percentage",
+      "description": "Brief description"
+    }
   ],
-  "scopeSummary": "2-3 sentence summary of what the consultant must do",
-  "keyDeliverables": ["deliverable 1", "deliverable 2"],
-  "reportingTo": "who the consultant reports to",
-  "submissionFormat": "email/portal/physical",
-  "documentsRequired": ["document 1", "document 2"],
-  "numberOfEnvelopes": "single / two-envelope",
-  "risks": [
-    { "risk": "risk description", "severity": "High/Medium/Low" }
+  "eligibilityCriteria": [
+    "Specific eligibility requirement 1",
+    "Specific eligibility requirement 2"
   ],
-  "legalClauses": {
+  "termsAndConditions": {
+    "liability": "Summary of liability limitations",
+    "penaltyLiquidatedDamages": "Penalty/LD rates and conditions",
+    "termination": "Termination conditions",
+    "insurance": "Required insurance types",
+    "indemnity": "Indemnity provisions",
     "conflictOfInterest": "COI restrictions",
-    "paymentTerms": "payment basis and timeline",
-    "intellectualProperty": "ownership of deliverables",
-    "disputeResolution": "arbitration/court details",
-    "governingLaw": "applicable jurisdiction",
-    "confidentiality": "confidentiality obligations",
-    "forceMajeure": "force majeure definition",
-    "subContracting": "sub-contracting rules"
+    "paymentTerms": "Payment basis and timeline",
+    "intellectualProperty": "Ownership of deliverables and data",
+    "disputeResolution": "Arbitration / Court details",
+    "governingLaw": "Applicable law/jurisdiction",
+    "confidentiality": "Confidentiality obligations",
+    "forceMajeure": "Force majeure definition",
+    "subContracting": "Rules on sub-contracting"
   },
-  "keyHighlights": ["important requirement or flag"]
+  "keyHighlights": [
+    "Important requirement or flag bidders must note",
+    "Another critical item"
+  ]
 }
 
 DOCUMENT TO ANALYZE:
@@ -116,7 +196,7 @@ DOCUMENT TO ANALYZE:
 ${docText}
 ---
 
-Return ONLY the JSON object. No markdown, no explanation.`;
+Return ONLY the JSON object. No markdown, no explanation, no code fences.`;
 
   // ── Call Groq ──
   try {
