@@ -1,3 +1,4 @@
+// v2 - Groq
 // TenderSense — Vercel Serverless Function
 // POST /api/analyze  { text: string, docType: "EOI"|"RFP" }
 
