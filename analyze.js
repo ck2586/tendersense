@@ -3,7 +3,7 @@
 
 module.exports = async function handler(req, res) {
 
-  // ── CORS headers (needed for browser requests) ──
+  // ── CORS headers ──
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -14,14 +14,14 @@ module.exports = async function handler(req, res) {
   }
 
   // ── API key check ──
-  const apiKey = process.env.GEMINI_API_KEY;
+  const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey) {
     return res.status(500).json({
-      error: 'GEMINI_API_KEY is not set. Go to Vercel → Project Settings → Environment Variables, add the key, then redeploy.'
+      error: 'GROQ_API_KEY is not set. Go to Vercel → Project Settings → Environment Variables, add the key, then redeploy.'
     });
   }
 
-  // ── Parse body (handles both pre-parsed object and raw string) ──
+  // ── Parse body ──
   let body = req.body;
   if (typeof body === 'string') {
     try { body = JSON.parse(body); }
@@ -40,15 +40,15 @@ module.exports = async function handler(req, res) {
   }
 
   // ── Truncate very large documents ──
-  const MAX_CHARS = 150000;
+  const MAX_CHARS = 80000;
   let docText = text;
   if (text.length > MAX_CHARS) {
     const mid = Math.floor(text.length / 2);
-    docText = text.substring(0, 55000)
+    docText = text.substring(0, 30000)
       + '\n\n[...middle section omitted...]\n\n'
-      + text.substring(mid - 15000, mid + 15000)
+      + text.substring(mid - 10000, mid + 10000)
       + '\n\n[...]\n\n'
-      + text.substring(text.length - 55000);
+      + text.substring(text.length - 30000);
   }
 
   const docTypeFull = docType === 'EOI' ? 'Expression of Interest (EoI)' : 'Request for Proposal (RfP)';
@@ -117,28 +117,33 @@ ${docText}
 
 Return ONLY the JSON object. No markdown, no explanation.`;
 
-  // ── Call Gemini ──
+  // ── Call Groq ──
   try {
-    const geminiRes = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
+    const groqRes = await fetch(
+      'https://api.groq.com/openai/v1/chat/completions',
       {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`
+        },
         body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: { maxOutputTokens: 8192, temperature: 0.1 }
+          model: 'llama-3.3-70b-versatile',
+          messages: [{ role: 'user', content: prompt }],
+          max_tokens: 8192,
+          temperature: 0.1
         })
       }
     );
 
-    if (!geminiRes.ok) {
-      const errData = await geminiRes.json().catch(() => ({}));
-      const msg = errData.error?.message || `Gemini API returned status ${geminiRes.status}`;
-      return res.status(geminiRes.status).json({ error: msg });
+    if (!groqRes.ok) {
+      const errData = await groqRes.json().catch(() => ({}));
+      const msg = errData.error?.message || `Groq API returned status ${groqRes.status}`;
+      return res.status(groqRes.status).json({ error: msg });
     }
 
-    const data = await geminiRes.json();
-    let raw = (data.candidates?.[0]?.content?.parts?.[0]?.text || '').trim();
+    const data = await groqRes.json();
+    let raw = (data.choices?.[0]?.message?.content || '').trim();
     raw = raw.replace(/^```json\s*/i, '').replace(/^```/, '').replace(/```$/, '').trim();
 
     try {
