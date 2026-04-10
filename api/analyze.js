@@ -1,4 +1,4 @@
-// v3 - Groq with correct nested JSON structure
+// v4 - Groq with correct nested JSON structure + reduced token size
 // TenderSense — Vercel Serverless Function
 // POST /api/analyze  { text: string, docType: "EOI"|"RFP" }
 
@@ -40,16 +40,16 @@ module.exports = async function handler(req, res) {
     return res.status(400).json({ error: 'Missing or invalid "docType" field in request.' });
   }
 
-  // ── Truncate very large documents ──
-  const MAX_CHARS = 80000;
+  // ── Truncate very large documents (Groq free tier has 12k TPM limit) ──
+  const MAX_CHARS = 20000;
   let docText = text;
   if (text.length > MAX_CHARS) {
     const mid = Math.floor(text.length / 2);
-    docText = text.substring(0, 30000)
+    docText = text.substring(0, 8000)
       + '\n\n[...middle section omitted...]\n\n'
-      + text.substring(mid - 10000, mid + 10000)
+      + text.substring(mid - 2000, mid + 2000)
       + '\n\n[...]\n\n'
-      + text.substring(text.length - 30000);
+      + text.substring(text.length - 8000);
   }
 
   const docTypeFull = docType === 'EOI' ? 'Expression of Interest (EoI)' : 'Request for Proposal (RfP)';
@@ -211,7 +211,7 @@ Return ONLY the JSON object. No markdown, no explanation, no code fences.`;
         body: JSON.stringify({
           model: 'llama-3.3-70b-versatile',
           messages: [{ role: 'user', content: prompt }],
-          max_tokens: 8192,
+          max_tokens: 4096,
           temperature: 0.1
         })
       }
