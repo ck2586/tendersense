@@ -1,4 +1,4 @@
-// v4 - Groq with correct nested JSON structure + reduced token size
+// v6 - Full document coverage: 30k head + 8k tail (no percentage sampling)
 // TenderSense — Vercel Serverless Function
 // POST /api/analyze  { text: string, docType: "EOI"|"RFP" }
 
@@ -40,16 +40,21 @@ module.exports = async function handler(req, res) {
     return res.status(400).json({ error: 'Missing or invalid "docType" field in request.' });
   }
 
-  // ── Truncate very large documents (Groq free tier has 12k TPM limit) ──
-  const MAX_CHARS = 20000;
+  // ── Document processing strategy ──
+  // Most RFPs are 10–30 pages (~40k chars). We process as much as possible in one pass.
+  // Groq free tier: ~12,000 input tokens/min. Prompt template ≈ 1,500 tokens.
+  // Remaining budget for document text: ~10,500 tokens ≈ 42,000 chars.
+  // Strategy: take a large leading block (covers intro → scope → team → evaluation → scoring)
+  // plus the tail (final clauses, payment terms, appendices). No guessing, no sampling.
+  const HEAD_CHARS = 30000; // pages 1–15+ in most RFPs — captures all substantive sections
+  const TAIL_CHARS = 8000;  // final pages — terms, validity, submission instructions
+  const MAX_CHARS  = HEAD_CHARS + TAIL_CHARS; // 38,000 chars ≈ 9,500 tokens (safely under limit)
+
   let docText = text;
   if (text.length > MAX_CHARS) {
-    const mid = Math.floor(text.length / 2);
-    docText = text.substring(0, 8000)
-      + '\n\n[...middle section omitted...]\n\n'
-      + text.substring(mid - 2000, mid + 2000)
-      + '\n\n[...]\n\n'
-      + text.substring(text.length - 8000);
+    docText = text.substring(0, HEAD_CHARS)
+      + '\n\n[...appendix forms and boilerplate omitted...]\n\n'
+      + text.substring(text.length - TAIL_CHARS);
   }
 
   const docTypeFull = docType === 'EOI' ? 'Expression of Interest (EoI)' : 'Request for Proposal (RfP)';
@@ -211,7 +216,7 @@ Return ONLY the JSON object. No markdown, no explanation, no code fences.`;
         body: JSON.stringify({
           model: 'llama-3.3-70b-versatile',
           messages: [{ role: 'user', content: prompt }],
-          max_tokens: 4096,
+          max_tokens: 8000,
           temperature: 0.1
         })
       }
