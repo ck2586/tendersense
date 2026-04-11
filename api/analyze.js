@@ -1,4 +1,4 @@
-// v6 - Full document coverage: 30k head + 8k tail (no percentage sampling)
+// v7 - Compact prompt (~800 tokens vs 2840) + 44k doc coverage + max_tokens=3000
 // TenderSense — Vercel Serverless Function
 // POST /api/analyze  { text: string, docType: "EOI"|"RFP" }
 
@@ -40,168 +40,36 @@ module.exports = async function handler(req, res) {
     return res.status(400).json({ error: 'Missing or invalid "docType" field in request.' });
   }
 
-  // ── Document processing strategy ──
-  // Most RFPs are 10–30 pages (~40k chars). We process as much as possible in one pass.
-  // Groq free tier: ~12,000 input tokens/min. Prompt template ≈ 1,500 tokens.
-  // Remaining budget for document text: ~10,500 tokens ≈ 42,000 chars.
-  // Strategy: take a large leading block (covers intro → scope → team → evaluation → scoring)
-  // plus the tail (final clauses, payment terms, appendices). No guessing, no sampling.
-  const HEAD_CHARS = 30000; // pages 1–15+ in most RFPs — captures all substantive sections
-  const TAIL_CHARS = 8000;  // final pages — terms, validity, submission instructions
-  const MAX_CHARS  = HEAD_CHARS + TAIL_CHARS; // 38,000 chars ≈ 9,500 tokens (safely under limit)
+  // ── Document coverage ──
+  // Budget: Groq free tier = 12,000 tokens/min (input + output combined).
+  // Compact prompt below ≈ 800 tokens. max_tokens output = 3,000.
+  // Remaining for document text: 12,000 - 800 - 3,000 = 8,200 tokens ≈ 44,000 chars.
+  // This covers the ENTIRE Odisha-style RFP (22 pages, ~44k chars) with no truncation.
+  // For larger docs we take a long head (all substantive sections) + tail (final terms).
+  const HEAD_CHARS = 36000;
+  const TAIL_CHARS = 8000;
+  const MAX_CHARS  = HEAD_CHARS + TAIL_CHARS; // 44,000 chars
 
   let docText = text;
   if (text.length > MAX_CHARS) {
     docText = text.substring(0, HEAD_CHARS)
-      + '\n\n[...appendix forms and boilerplate omitted...]\n\n'
+      + '\n\n[...appendix forms omitted...]\n\n'
       + text.substring(text.length - TAIL_CHARS);
   }
 
   const docTypeFull = docType === 'EOI' ? 'Expression of Interest (EoI)' : 'Request for Proposal (RfP)';
 
-  const prompt = `You are an expert procurement analyst. Analyze this ${docTypeFull} document and extract ALL key information. Return ONLY a valid JSON object with this exact nested structure (use null for fields not found):
+  // Compact prompt — field names only (no descriptions), saves ~2,000 tokens vs verbose version
+  const prompt = `You are an expert procurement analyst. Extract ALL information from this ${docTypeFull}. Return ONLY valid JSON matching this exact structure. Use null for any field not found. Do not invent data.
 
-{
-  "documentSummary": {
-    "documentType": "${docType}",
-    "clientOrganization": "Full legal name of issuing client/implementing agency",
-    "projectTitle": "Title of the assignment/consultancy",
-    "parentProject": "Name of the larger project this falls under",
-    "tenderReferenceNumber": "Full reference/tender number",
-    "issuedDate": "Date document was issued",
-    "prebidQueryDeadline": "Date by which written queries must be submitted",
-    "prebidMeetingDate": "Date of pre-bid conference/pre-proposal meeting",
-    "prebidMeetingTime": "Time of pre-bid meeting",
-    "prebidMeetingVenue": "Venue or mode of pre-bid meeting",
-    "submissionDeadline": "Final submission deadline date",
-    "submissionTime": "Time of submission deadline",
-    "submissionMode": "Hard copy / online portal / email / hybrid",
-    "submissionAddress": "Physical address or portal/email for submission",
-    "proposalValidity": "Number of days or date until which proposal remains valid",
-    "contactEmail": "Contact email for queries",
-    "contactPhone": "Contact phone"
-  },
-  "fundingInfo": {
-    "financingAgency": "World Bank / ADB / USAID / Government / etc.",
-    "loanCreditGrantNumber": "Loan/Credit/Grant number",
-    "financingType": "Loan / Credit / Grant / Budget",
-    "borrower": "The borrowing government entity",
-    "procurementRegulations": "Which procurement regulations apply",
-    "currency": "Currency for financial proposal",
-    "taxTreatment": "How taxes are handled"
-  },
-  "proposalRequirements": {
-    "proposalFormat": "Full Technical Proposal / Simplified Technical Proposal",
-    "contractType": "Lump-Sum / Time-Based / Retainer",
-    "technicalProposalRequired": true,
-    "financialProposalRequired": true,
-    "jointVenturePermitted": null,
-    "subContractingAllowed": null,
-    "languageOfProposal": "English",
-    "numberOfCopies": "Original + N copies or electronic submission",
-    "electronicSubmissionAllowed": null,
-    "estimatedPersonMonths": "Total person-months of key expert input estimated"
-  },
-  "evaluationFramework": {
-    "isQCBS": null,
-    "selectionMethod": "QCBS / QBS / FBS / LCS / CQS",
-    "technicalWeight": null,
-    "financialWeight": null,
-    "minimumTechnicalScore": null,
-    "technicalEvaluationCriteria": [
-      {
-        "criterionNumber": "i",
-        "criterion": "criterion name",
-        "maxScore": null,
-        "description": "brief description",
-        "subCriteria": [
-          {"name": "sub-criterion name", "score": null}
-        ]
-      }
-    ],
-    "keyExpertSubCriteriaWeights": "Description of how key expert scores are broken down",
-    "financialScoringFormula": "How financial score is calculated"
-  },
-  "tenderOverview": {
-    "objective": "Clear 2-3 sentence statement of the assignment objective",
-    "background": "Brief background on the program/project context",
-    "scopeOfWork": ["Major activity or deliverable 1", "Major activity or deliverable 2"],
-    "projectDuration": "Duration in months or years as stated",
-    "estimatedStartDate": "Anticipated start date",
-    "projectLocation": "Where the work will be performed",
-    "estimatedContractValue": "Budget or indicative contract value if mentioned",
-    "targetBeneficiaries": "Who benefits from this project"
-  },
-  "teamRequirements": {
-    "coreTeam": [
-      {
-        "positionCode": "K-1",
-        "position": "Position title",
-        "isKeyExpert": true,
-        "numberOfPositions": 1,
-        "personMonths": null,
-        "commitmentLevel": "Full-time / Part-time / Periodic",
-        "educationalQualification": "Required education",
-        "yearsOfExperience": "Minimum years",
-        "specificExperience": "Specific experience required",
-        "evaluationScore": null
-      }
-    ],
-    "nonCoreTeam": [
-      {
-        "positionCode": "N-1",
-        "position": "Position title",
-        "isKeyExpert": false,
-        "numberOfPositions": 1,
-        "personMonths": null,
-        "commitmentLevel": "Periodic",
-        "educationalQualification": "Required education",
-        "yearsOfExperience": "Minimum years",
-        "specificExperience": "Specific experience required"
-      }
-    ],
-    "additionalStaffNotes": "Any notes on field staff, language requirements, gender requirements"
-  },
-  "deliverablesAndPayments": [
-    {
-      "deliverableNo": 1,
-      "deliverableName": "Deliverable name",
-      "timeline": "Timeline as stated",
-      "paymentPercentage": "Payment percentage",
-      "description": "Brief description"
-    }
-  ],
-  "eligibilityCriteria": [
-    "Specific eligibility requirement 1",
-    "Specific eligibility requirement 2"
-  ],
-  "termsAndConditions": {
-    "liability": "Summary of liability limitations",
-    "penaltyLiquidatedDamages": "Penalty/LD rates and conditions",
-    "termination": "Termination conditions",
-    "insurance": "Required insurance types",
-    "indemnity": "Indemnity provisions",
-    "conflictOfInterest": "COI restrictions",
-    "paymentTerms": "Payment basis and timeline",
-    "intellectualProperty": "Ownership of deliverables and data",
-    "disputeResolution": "Arbitration / Court details",
-    "governingLaw": "Applicable law/jurisdiction",
-    "confidentiality": "Confidentiality obligations",
-    "forceMajeure": "Force majeure definition",
-    "subContracting": "Rules on sub-contracting"
-  },
-  "keyHighlights": [
-    "Important requirement or flag bidders must note",
-    "Another critical item"
-  ]
-}
+{"documentSummary":{"documentType":"${docType}","clientOrganization":null,"projectTitle":null,"parentProject":null,"tenderReferenceNumber":null,"issuedDate":null,"prebidQueryDeadline":null,"prebidMeetingDate":null,"prebidMeetingTime":null,"prebidMeetingVenue":null,"submissionDeadline":null,"submissionTime":null,"submissionMode":null,"submissionAddress":null,"proposalValidity":null,"contactEmail":null,"contactPhone":null},"fundingInfo":{"financingAgency":null,"loanCreditGrantNumber":null,"financingType":null,"borrower":null,"procurementRegulations":null,"currency":null,"taxTreatment":null},"proposalRequirements":{"proposalFormat":null,"contractType":null,"technicalProposalRequired":null,"financialProposalRequired":null,"jointVenturePermitted":null,"subContractingAllowed":null,"languageOfProposal":null,"numberOfCopies":null,"electronicSubmissionAllowed":null,"estimatedPersonMonths":null},"evaluationFramework":{"isQCBS":null,"selectionMethod":null,"technicalWeight":null,"financialWeight":null,"minimumTechnicalScore":null,"technicalEvaluationCriteria":[{"criterionNumber":null,"criterion":null,"maxScore":null,"description":null,"subCriteria":[{"name":null,"score":null}]}],"keyExpertSubCriteriaWeights":null,"financialScoringFormula":null},"tenderOverview":{"objective":null,"background":null,"scopeOfWork":[],"projectDuration":null,"estimatedStartDate":null,"projectLocation":null,"estimatedContractValue":null,"targetBeneficiaries":null},"teamRequirements":{"coreTeam":[{"positionCode":null,"position":null,"isKeyExpert":true,"numberOfPositions":null,"personMonths":null,"commitmentLevel":null,"educationalQualification":null,"yearsOfExperience":null,"specificExperience":null,"evaluationScore":null}],"nonCoreTeam":[{"positionCode":null,"position":null,"isKeyExpert":false,"numberOfPositions":null,"personMonths":null,"commitmentLevel":null,"educationalQualification":null,"yearsOfExperience":null,"specificExperience":null}],"additionalStaffNotes":null},"deliverablesAndPayments":[{"deliverableNo":1,"deliverableName":null,"timeline":null,"paymentPercentage":null,"description":null}],"eligibilityCriteria":[],"termsAndConditions":{"liability":null,"penaltyLiquidatedDamages":null,"termination":null,"insurance":null,"indemnity":null,"conflictOfInterest":null,"paymentTerms":null,"intellectualProperty":null,"disputeResolution":null,"governingLaw":null,"confidentiality":null,"forceMajeure":null,"subContracting":null},"keyHighlights":[]}
 
-DOCUMENT TO ANALYZE:
+DOCUMENT:
 ---
 ${docText}
 ---
 
-Return ONLY the JSON object. No markdown, no explanation, no code fences.`;
+Return ONLY the JSON. No markdown, no code fences.`;
 
   // ── Call Groq ──
   try {
@@ -216,7 +84,7 @@ Return ONLY the JSON object. No markdown, no explanation, no code fences.`;
         body: JSON.stringify({
           model: 'llama-3.3-70b-versatile',
           messages: [{ role: 'user', content: prompt }],
-          max_tokens: 8000,
+          max_tokens: 3000,
           temperature: 0.1
         })
       }
