@@ -1,6 +1,7 @@
-// v9 - Multi-chunk processing: every page is read, results merged
-// Each chunk: ~18,000 chars = ~3,854 doc tokens + 800 prompt + 1,800 output = 6,454 total
-// Well under Groq's 12,000 TPM limit. A 44k-char RFP = 3 chunks, all pages covered.
+// v10 - Multi-chunk + retry with Groq-reported wait time
+// Each chunk ~6,400 tokens. Rolling TPM window = 12,000/min.
+// Between chunks we wait 8s (clears ~1,600 tokens). On rate-limit error, we parse
+// the exact retry-after time from Groq's message and wait that long before retrying.
 
 module.exports = async function handler(req, res) {
 
@@ -38,14 +39,29 @@ module.exports = async function handler(req, res) {
     start = end - OVERLAP;
   }
 
-  // ── Analyze each chunk ──
+  // ── Analyze each chunk, with pacing to respect Groq's 12,000 TPM rolling window ──
+  // Each chunk uses ~6,400 tokens. After a chunk, we wait 8s so the window has room
+  // for the next one (8s × 200 tokens/s = 1,600 tokens cleared). If Groq still says
+  // "rate limit", we read its exact retry-after time and wait that long, then retry once.
   const chunkResults = [];
   for (let i = 0; i < chunks.length; i++) {
-    try {
-      const result = await analyzeChunk(apiKey, chunks[i], docType, i + 1, chunks.length);
-      chunkResults.push(result);
-    } catch (err) {
-      return res.status(500).json({ error: `Chunk ${i + 1}/${chunks.length} failed: ${err.message}` });
+    if (i > 0) await sleep(8000); // pace between chunks
+
+    let attempts = 0;
+    while (true) {
+      try {
+        const result = await analyzeChunk(apiKey, chunks[i], docType, i + 1, chunks.length);
+        chunkResults.push(result);
+        break;
+      } catch (err) {
+        attempts++;
+        const waitMs = parseRetryAfter(err.message); // read Groq's suggested wait
+        if (attempts < 3 && waitMs > 0) {
+          await sleep(waitMs + 500); // wait exactly as long as Groq asks, plus 500ms buffer
+        } else {
+          return res.status(500).json({ error: `Chunk ${i + 1}/${chunks.length} failed after ${attempts} attempts: ${err.message}` });
+        }
+      }
     }
   }
 
@@ -53,6 +69,19 @@ module.exports = async function handler(req, res) {
   const merged = mergeResults(chunkResults);
   return res.status(200).json(merged);
 };
+
+// ─────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+// Groq rate-limit errors contain "try again in X.XXXs" — parse that as milliseconds
+function parseRetryAfter(message) {
+  const m = (message || '').match(/try again in (\d+\.?\d*)s/i);
+  return m ? Math.ceil(parseFloat(m[1]) * 1000) : 5000; // default 5s if not found
+}
 
 // ─────────────────────────────────────────────
 // Analyze a single chunk via Groq
