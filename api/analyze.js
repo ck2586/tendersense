@@ -1,4 +1,4 @@
-// v7 - Compact prompt (~800 tokens vs 2840) + 44k doc coverage + max_tokens=3000
+// v8 - Tuned to actual token density (4.67 chars/token): 34k doc + max_tokens=2000 = ~9800 total
 // TenderSense — Vercel Serverless Function
 // POST /api/analyze  { text: string, docType: "EOI"|"RFP" }
 
@@ -40,15 +40,15 @@ module.exports = async function handler(req, res) {
     return res.status(400).json({ error: 'Missing or invalid "docType" field in request.' });
   }
 
-  // ── Document coverage ──
-  // Budget: Groq free tier = 12,000 tokens/min (input + output combined).
-  // Compact prompt below ≈ 800 tokens. max_tokens output = 3,000.
-  // Remaining for document text: 12,000 - 800 - 3,000 = 8,200 tokens ≈ 44,000 chars.
-  // This covers the ENTIRE Odisha-style RFP (22 pages, ~44k chars) with no truncation.
-  // For larger docs we take a long head (all substantive sections) + tail (final terms).
-  const HEAD_CHARS = 36000;
-  const TAIL_CHARS = 8000;
-  const MAX_CHARS  = HEAD_CHARS + TAIL_CHARS; // 44,000 chars
+  // ── Document coverage (calibrated from real error data) ──
+  // Observed: 44,000 char doc = 9,434 tokens → 4.67 chars/token for this doc type.
+  // Budget: 12,000 TPM limit (Groq counts input + max_tokens combined).
+  //   Prompt ≈ 800 tokens + doc ≈ 7,281 tokens + max_tokens 2,000 = 10,081 total ✓
+  // HEAD covers pages 1–14 (all substantive content incl. evaluation criteria).
+  // TAIL covers final pages (terms, payment, submission instructions).
+  const HEAD_CHARS = 28000; // pages 1–14 at ~2,000 chars/page
+  const TAIL_CHARS = 6000;  // last ~3 pages
+  const MAX_CHARS  = HEAD_CHARS + TAIL_CHARS; // 34,000 chars
 
   let docText = text;
   if (text.length > MAX_CHARS) {
@@ -84,7 +84,7 @@ Return ONLY the JSON. No markdown, no code fences.`;
         body: JSON.stringify({
           model: 'llama-3.3-70b-versatile',
           messages: [{ role: 'user', content: prompt }],
-          max_tokens: 3000,
+          max_tokens: 2000,
           temperature: 0.1
         })
       }
