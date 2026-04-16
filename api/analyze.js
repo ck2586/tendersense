@@ -1,22 +1,21 @@
-// v10 - Multi-chunk + retry with Groq-reported wait time
-// Each chunk ~6,400 tokens. Rolling TPM window = 12,000/min.
-// Between chunks we wait 8s (clears ~1,600 tokens). On rate-limit error, we parse
-// the exact retry-after time from Groq's message and wait that long before retrying.
+// v12 — Full-document chunked extraction with:
+//   - Explicit schema examples for ALL array types (criteria, deliverables, team, scope)
+//   - Detailed scopeOfWork: "Component N: Title — sub-item1; sub-item2" format
+//   - Combine-merge for arrays that span multiple pages/chunks
+//   - 2400 max_tokens per chunk, 15000-char chunks, 8s inter-chunk delay
+//   - Retry with Groq-reported wait time on rate-limit errors
 
 module.exports = async function handler(req, res) {
 
-  // ── CORS ──
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed. Use POST.' });
 
-  // ── API key ──
   const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey) return res.status(500).json({ error: 'GROQ_API_KEY is not set in Vercel environment variables.' });
 
-  // ── Parse body ──
   let body = req.body;
   if (typeof body === 'string') {
     try { body = JSON.parse(body); } catch { return res.status(400).json({ error: 'Could not parse request body.' }); }
@@ -25,10 +24,10 @@ module.exports = async function handler(req, res) {
   if (!text || typeof text !== 'string') return res.status(400).json({ error: 'Missing "text" field.' });
   if (!docType || typeof docType !== 'string') return res.status(400).json({ error: 'Missing "docType" field.' });
 
-  // ── Split document into overlapping chunks ──
-  // 18,000 chars per chunk keeps each Groq call well under 12,000 tokens.
-  // 500-char overlap ensures content at chunk boundaries isn't missed.
-  const CHUNK_SIZE = 18000;
+  // Chunk the document — 15,000 chars ≈ 3,200 tokens input.
+  // 2,400 max_tokens output → ~5,600 total per request.
+  // After 8s delay, 12,000 TPM window clears ~1,600 tokens, so chunk 2 fits.
+  const CHUNK_SIZE = 15000;
   const OVERLAP    = 500;
   const chunks = [];
   let start = 0;
@@ -39,14 +38,9 @@ module.exports = async function handler(req, res) {
     start = end - OVERLAP;
   }
 
-  // ── Analyze each chunk, with pacing to respect Groq's 12,000 TPM rolling window ──
-  // Each chunk uses ~6,400 tokens. After a chunk, we wait 8s so the window has room
-  // for the next one (8s × 200 tokens/s = 1,600 tokens cleared). If Groq still says
-  // "rate limit", we read its exact retry-after time and wait that long, then retry once.
   const chunkResults = [];
   for (let i = 0; i < chunks.length; i++) {
-    if (i > 0) await sleep(8000); // pace between chunks
-
+    if (i > 0) await sleep(8000);
     let attempts = 0;
     while (true) {
       try {
@@ -55,9 +49,9 @@ module.exports = async function handler(req, res) {
         break;
       } catch (err) {
         attempts++;
-        const waitMs = parseRetryAfter(err.message); // read Groq's suggested wait
+        const waitMs = parseRetryAfter(err.message);
         if (attempts < 3 && waitMs > 0) {
-          await sleep(waitMs + 500); // wait exactly as long as Groq asks, plus 500ms buffer
+          await sleep(waitMs + 500);
         } else {
           return res.status(500).json({ error: `Chunk ${i + 1}/${chunks.length} failed after ${attempts} attempts: ${err.message}` });
         }
@@ -65,42 +59,46 @@ module.exports = async function handler(req, res) {
     }
   }
 
-  // ── Merge all chunk results into one complete response ──
   const merged = mergeResults(chunkResults);
   return res.status(200).json(merged);
 };
 
-// ─────────────────────────────────────────────
-// Helpers
-// ─────────────────────────────────────────────
-function sleep(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
-// Groq rate-limit errors contain "try again in X.XXXs" — parse that as milliseconds
 function parseRetryAfter(message) {
   const m = (message || '').match(/try again in (\d+\.?\d*)s/i);
-  return m ? Math.ceil(parseFloat(m[1]) * 1000) : 5000; // default 5s if not found
+  return m ? Math.ceil(parseFloat(m[1]) * 1000) : 5000;
 }
 
-// ─────────────────────────────────────────────
-// Analyze a single chunk via Groq
-// ─────────────────────────────────────────────
 async function analyzeChunk(apiKey, chunkText, docType, chunkNum, totalChunks) {
   const docTypeFull = docType === 'EOI' ? 'Expression of Interest (EoI)' : 'Request for Proposal (RfP)';
 
-  const prompt = `You are an expert procurement analyst. This is chunk ${chunkNum} of ${totalChunks} of a ${docTypeFull} document. Extract ALL information found in THIS chunk. Use null for fields not present in this chunk. Do not invent data.
+  const prompt = `You are an expert procurement analyst. This is chunk ${chunkNum} of ${totalChunks} of a ${docTypeFull} document. Extract ALL information found in THIS chunk. Return null for fields absent in this chunk. Do NOT invent or guess data.
 
-Return ONLY valid JSON with this exact structure:
+EXTRACTION RULES — READ CAREFULLY:
 
-{"documentSummary":{"documentType":"${docType}","clientOrganization":null,"projectTitle":null,"parentProject":null,"tenderReferenceNumber":null,"issuedDate":null,"prebidQueryDeadline":null,"prebidMeetingDate":null,"prebidMeetingTime":null,"prebidMeetingVenue":null,"submissionDeadline":null,"submissionTime":null,"submissionMode":null,"submissionAddress":null,"proposalValidity":null,"contactEmail":null,"contactPhone":null},"fundingInfo":{"financingAgency":null,"loanCreditGrantNumber":null,"financingType":null,"borrower":null,"procurementRegulations":null,"currency":null,"taxTreatment":null},"proposalRequirements":{"proposalFormat":null,"contractType":null,"technicalProposalRequired":null,"financialProposalRequired":null,"jointVenturePermitted":null,"subContractingAllowed":null,"languageOfProposal":null,"numberOfCopies":null,"electronicSubmissionAllowed":null,"estimatedPersonMonths":null},"evaluationFramework":{"isQCBS":null,"selectionMethod":null,"technicalWeight":null,"financialWeight":null,"minimumTechnicalScore":null,"technicalEvaluationCriteria":[],"keyExpertSubCriteriaWeights":null,"financialScoringFormula":null},"tenderOverview":{"objective":null,"background":null,"scopeOfWork":[],"projectDuration":null,"estimatedStartDate":null,"projectLocation":null,"estimatedContractValue":null,"targetBeneficiaries":null},"teamRequirements":{"coreTeam":[],"nonCoreTeam":[],"additionalStaffNotes":null},"deliverablesAndPayments":[],"eligibilityCriteria":[],"termsAndConditions":{"liability":null,"penaltyLiquidatedDamages":null,"termination":null,"insurance":null,"indemnity":null,"conflictOfInterest":null,"paymentTerms":null,"intellectualProperty":null,"disputeResolution":null,"governingLaw":null,"confidentiality":null,"forceMajeure":null,"subContracting":null},"keyHighlights":[]}
+1. technicalEvaluationCriteria: Extract EVERY main criterion AND its sub-criteria with EXACT point allocations. Include criterionNumber (e.g. "1", "1.1", "2.2"), full criterion name, a concise description, maxScore as an integer, and all subCriteria with their name and score.
+
+2. deliverablesAndPayments: Extract EVERY deliverable row with its COMPLETE name (e.g. "Inception Report detailing refined methodology and approach"), the exact timeline (e.g. "2 weeks from contract signing"), and the payment percentage/tranche (e.g. "10%").
+
+3. coreTeam: Extract each expert position. Use the position title (e.g. "Team Lead", "Gender Analyst"), qualifications required, years of experience, and the evaluationScore (points allocated to that position in the evaluation criteria).
+
+4. scopeOfWork: Extract DETAILED scope, NOT just component titles. For each component include all its sub-deliverables in this format: "Component N: [Title] — [sub-item 1]; [sub-item 2]; [sub-item 3]". Example: "Component 1: Mapping of Gender-Specific Indicators — Gender indicator gap analysis report for two states; Enhanced gender-responsive indicator set; Priority indicators with multiplier effect analysis; Indicator metadata sheets".
+
+5. minimumTechnicalScore: Extract as a whole number (e.g. 70, not 0.7). If the document says "70%", extract 70.
+
+Return ONLY valid JSON with this exact structure (array items show required schema — replace with real data):
+
+{"documentSummary":{"documentType":"${docType}","clientOrganization":null,"projectTitle":null,"parentProject":null,"tenderReferenceNumber":null,"issuedDate":null,"prebidQueryDeadline":null,"prebidMeetingDate":null,"prebidMeetingTime":null,"prebidMeetingVenue":null,"submissionDeadline":null,"submissionTime":null,"submissionMode":null,"submissionAddress":null,"proposalValidity":null,"contactEmail":null,"contactPhone":null},"fundingInfo":{"financingAgency":null,"loanCreditGrantNumber":null,"financingType":null,"borrower":null,"procurementRegulations":null,"currency":null,"taxTreatment":null},"proposalRequirements":{"proposalFormat":null,"contractType":null,"technicalProposalRequired":null,"financialProposalRequired":null,"jointVenturePermitted":null,"subContractingAllowed":null,"languageOfProposal":null,"numberOfCopies":null,"electronicSubmissionAllowed":null,"estimatedPersonMonths":null},"evaluationFramework":{"isQCBS":null,"selectionMethod":null,"technicalWeight":null,"financialWeight":null,"minimumTechnicalScore":null,"technicalEvaluationCriteria":[{"criterionNumber":"1","criterion":"Expertise of the Firm","description":"Track record and organisational credentials","maxScore":20,"subCriteria":[{"name":"1.1 Years of experience in gender mainstreaming","score":5},{"name":"1.2 Proven experience in two areas","score":8},{"name":"1.3 State government engagement experience","score":7}]}],"keyExpertSubCriteriaWeights":null,"financialScoringFormula":null},"tenderOverview":{"objective":null,"background":null,"scopeOfWork":["Component 1: Title — sub-deliverable A; sub-deliverable B; sub-deliverable C","Component 2: Title — sub-deliverable A; sub-deliverable B"],"projectDuration":null,"estimatedStartDate":null,"projectLocation":null,"estimatedContractValue":null,"targetBeneficiaries":null},"teamRequirements":{"coreTeam":[{"positionCode":"2.1","position":"Team Lead","educationalQualification":"Master's degree in public policy or related discipline","specificExperience":"At least 10 years progressive professional experience in gender mainstreaming","personMonths":null,"numberOfPositions":1,"evaluationScore":10}],"nonCoreTeam":[],"additionalStaffNotes":null},"deliverablesAndPayments":[{"deliverableNo":1,"deliverableName":"Inception Report detailing refined methodology, approach, workplan, stakeholder mapping and risk register","description":null,"timeline":"2 weeks from contract signing","paymentPercentage":"10%"}],"eligibilityCriteria":[],"termsAndConditions":{"liability":null,"penaltyLiquidatedDamages":null,"termination":null,"insurance":null,"indemnity":null,"conflictOfInterest":null,"paymentTerms":null,"intellectualProperty":null,"disputeResolution":null,"governingLaw":null,"confidentiality":null,"forceMajeure":null,"subContracting":null},"keyHighlights":[]}
+
+Replace ALL example values above with real data from this chunk. Return [] for array fields with no data in this chunk.
 
 DOCUMENT CHUNK:
 ---
 ${chunkText}
 ---
 
-Return ONLY the JSON. No markdown, no code fences.`;
+Return ONLY the JSON object. No markdown, no code fences, no commentary.`;
 
   const groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
@@ -108,7 +106,7 @@ Return ONLY the JSON. No markdown, no code fences.`;
     body: JSON.stringify({
       model: 'llama-3.3-70b-versatile',
       messages: [{ role: 'user', content: prompt }],
-      max_tokens: 1800,
+      max_tokens: 2400,
       temperature: 0.1
     })
   });
@@ -131,13 +129,25 @@ Return ONLY the JSON. No markdown, no code fences.`;
   }
 }
 
-// ─────────────────────────────────────────────
-// Merge multiple chunk results into one
-// Rules:
-//   Scalars  → first non-null value wins
-//   Arrays   → longest non-empty array wins (more items = more complete extraction)
-//   Objects  → recurse
-// ─────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────
+// Merge Strategy
+//   COMBINE arrays — concatenate + deduplicate across chunks
+//     (criteria, deliverables, team, scope, eligibility, highlights)
+//   BEST-WINS arrays — pick array with most real data
+//   Scalars — first non-null wins
+//   Objects — recurse
+// ─────────────────────────────────────────────────────────────
+
+const COMBINE_ARRAYS = new Set([
+  'technicalEvaluationCriteria',
+  'deliverablesAndPayments',
+  'scopeOfWork',
+  'eligibilityCriteria',
+  'keyHighlights',
+  'coreTeam',
+  'nonCoreTeam'
+]);
+
 function mergeResults(results) {
   if (!results || results.length === 0) return {};
   if (results.length === 1) return results[0];
@@ -148,8 +158,6 @@ function mergeResults(results) {
   return merged;
 }
 
-// Count how many real (non-null, non-empty) values exist in an array
-// Used to prefer the array with actual data over the array that's merely longer
 function countData(arr) {
   if (!Array.isArray(arr) || arr.length === 0) return 0;
   return arr.reduce((sum, item) => {
@@ -164,37 +172,66 @@ function countData(arr) {
   }, 0);
 }
 
+function mergeArrayCombine(baseArr, incomingArr) {
+  if (!Array.isArray(baseArr)) baseArr = [];
+  if (!Array.isArray(incomingArr) || incomingArr.length === 0) return baseArr;
+
+  const combined = baseArr.slice();
+
+  for (const item of incomingArr) {
+    if (item === null || item === undefined) continue;
+
+    if (typeof item === 'string') {
+      if (item.trim() && !combined.some(x => x === item)) combined.push(item);
+      continue;
+    }
+
+    if (typeof item !== 'object') { combined.push(item); continue; }
+
+    const dedupKey = item.criterionNumber ?? item.deliverableNo ?? item.positionCode ?? item.position ?? null;
+
+    if (dedupKey !== null && dedupKey !== undefined && dedupKey !== '') {
+      const existingIdx = combined.findIndex(x =>
+        typeof x === 'object' && x !== null &&
+        (x.criterionNumber === dedupKey || x.deliverableNo === dedupKey ||
+         x.positionCode === dedupKey || x.position === dedupKey)
+      );
+      if (existingIdx >= 0) {
+        if (countData([item]) > countData([combined[existingIdx]])) {
+          combined[existingIdx] = item;
+        }
+      } else {
+        if (countData([item]) > 0) combined.push(item);
+      }
+    } else {
+      if (countData([item]) > 0) combined.push(item);
+    }
+  }
+  return combined;
+}
+
 function mergeDeep(base, incoming) {
   if (!incoming || typeof incoming !== 'object' || Array.isArray(incoming)) return base;
-
   const result = Object.assign({}, base);
 
   for (const key of Object.keys(incoming)) {
     const bVal = base[key];
     const iVal = incoming[key];
-
-    if (iVal === null || iVal === undefined) continue; // nothing to add
+    if (iVal === null || iVal === undefined) continue;
 
     if (Array.isArray(iVal)) {
-      if (!Array.isArray(bVal) || bVal.length === 0) {
-        result[key] = iVal; // base empty — take incoming
+      if (COMBINE_ARRAYS.has(key)) {
+        result[key] = mergeArrayCombine(Array.isArray(bVal) ? bVal : [], iVal);
+      } else if (!Array.isArray(bVal) || bVal.length === 0) {
+        result[key] = iVal;
       } else {
-        // Pick whichever array has MORE actual data (not just more items).
-        // This prevents 5 empty objects from beating 3 populated ones.
-        const bScore = countData(bVal);
-        const iScore = countData(iVal);
-        if (iScore > bScore) result[key] = iVal;
-        // else keep base
+        if (countData(iVal) > countData(bVal)) result[key] = iVal;
       }
     } else if (typeof iVal === 'object') {
       result[key] = mergeDeep(bVal && typeof bVal === 'object' ? bVal : {}, iVal);
     } else {
-      // Scalar: keep base if it has a value, otherwise take incoming
-      if (bVal === null || bVal === undefined) {
-        result[key] = iVal;
-      }
+      if (bVal === null || bVal === undefined) result[key] = iVal;
     }
   }
-
   return result;
 }
