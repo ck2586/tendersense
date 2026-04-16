@@ -148,6 +148,22 @@ function mergeResults(results) {
   return merged;
 }
 
+// Count how many real (non-null, non-empty) values exist in an array
+// Used to prefer the array with actual data over the array that's merely longer
+function countData(arr) {
+  if (!Array.isArray(arr) || arr.length === 0) return 0;
+  return arr.reduce((sum, item) => {
+    if (item === null || item === undefined) return sum;
+    if (typeof item === 'string') return sum + (item.trim().length > 0 ? 1 : 0);
+    if (typeof item === 'object') {
+      return sum + Object.values(item).filter(
+        v => v !== null && v !== undefined && v !== '' && !(Array.isArray(v) && v.length === 0)
+      ).length;
+    }
+    return sum + 1;
+  }, 0);
+}
+
 function mergeDeep(base, incoming) {
   if (!incoming || typeof incoming !== 'object' || Array.isArray(incoming)) return base;
 
@@ -161,13 +177,15 @@ function mergeDeep(base, incoming) {
 
     if (Array.isArray(iVal)) {
       if (!Array.isArray(bVal) || bVal.length === 0) {
-        // base has nothing — take incoming
-        result[key] = iVal;
-      } else if (iVal.length > bVal.length) {
-        // incoming has more items — it's more complete
-        result[key] = iVal;
+        result[key] = iVal; // base empty — take incoming
+      } else {
+        // Pick whichever array has MORE actual data (not just more items).
+        // This prevents 5 empty objects from beating 3 populated ones.
+        const bScore = countData(bVal);
+        const iScore = countData(iVal);
+        if (iScore > bScore) result[key] = iVal;
+        // else keep base
       }
-      // else keep base (it already has more or equal items)
     } else if (typeof iVal === 'object') {
       result[key] = mergeDeep(bVal && typeof bVal === 'object' ? bVal : {}, iVal);
     } else {
