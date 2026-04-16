@@ -326,12 +326,12 @@
   <div id="progress-section" class="hidden">
     <div class="progress-panel">
       <div class="progress-title">Analyzing your document…</div>
-      <div class="progress-sub">Gemini AI is reading the tender document and extracting key information</div>
+      <div class="progress-sub">AI is reading the tender document and extracting key information</div>
       <div class="progress-bar-wrap"><div class="progress-bar" id="progressBar"></div></div>
       <div class="progress-steps" id="progressSteps">
         <div class="step-item" id="step1"><div class="step-dot">1</div><span>Reading document content</span></div>
         <div class="step-item" id="step2"><div class="step-dot">2</div><span>Extracting text from document</span></div>
-        <div class="step-item" id="step3"><div class="step-dot">3</div><span>Sending to Gemini AI for analysis</span></div>
+        <div class="step-item" id="step3"><div class="step-dot">3</div><span>Sending to AI for analysis</span></div>
         <div class="step-item" id="step4"><div class="step-dot">4</div><span>Structuring results</span></div>
       </div>
     </div>
@@ -806,10 +806,10 @@ async function startAnalysis() {
     hide('progress-section'); show('setup-section');
     const p = get('errorPanel');
     let msg = err.message;
-    if (msg.includes('quota') || msg.includes('RESOURCE_EXHAUSTED') || msg.includes('rate') || msg.includes('exceeded')) {
-      msg = 'API quota exceeded. The server\'s Gemini API key has hit its daily free limit. Please try again later, or update the GEMINI_API_KEY in your server environment.';
-    } else if (msg.includes('API_KEY_INVALID') || msg.includes('invalid') && msg.includes('key')) {
-      msg = 'Invalid API key on the server. Please update the GEMINI_API_KEY environment variable with a valid key from aistudio.google.com/apikey.';
+    if (msg.includes('quota') || msg.includes('RESOURCE_EXHAUSTED') || msg.includes('rate') || msg.includes('exceeded') || msg.includes('Rate limit')) {
+      msg = 'API rate limit reached. Please wait a moment and try again.';
+    } else if (msg.includes('API_KEY_INVALID') || msg.includes('invalid') && msg.includes('key') || msg.includes('GROQ_API_KEY')) {
+      msg = 'Invalid API key on the server. Please update the GROQ_API_KEY environment variable in Vercel with a valid key from console.groq.com.';
     } else if (msg.includes('Failed to fetch') || msg.includes('NetworkError')) {
       msg = 'Could not reach the server. Make sure the Node.js server (server.js) is running.';
     }
@@ -868,6 +868,9 @@ function renderResults(d) {
   // ---- STATS ----
   const stats = [];
   if (hasVal(to.projectDuration)) stats.push({ val: to.projectDuration, lbl: 'Project Duration', cls: 'blue' });
+  // Normalize weight: AI sometimes returns 0.7 instead of 70 — fix silently
+  if (ef.technicalWeight && ef.technicalWeight < 2) ef.technicalWeight = Math.round(ef.technicalWeight * 100);
+  if (ef.financialWeight && ef.financialWeight < 2) ef.financialWeight = Math.round(ef.financialWeight * 100);
   if (ef.technicalWeight) stats.push({ val: ef.technicalWeight + '%', lbl: 'Technical Weight', cls: 'blue' });
   if (ef.minimumTechnicalScore) stats.push({ val: ef.minimumTechnicalScore + '%', lbl: 'Min. Tech Score', cls: 'amber' });
   if (hasVal(pr.estimatedPersonMonths)) stats.push({ val: pr.estimatedPersonMonths, lbl: 'Est. Person-Months', cls: 'green' });
@@ -901,7 +904,9 @@ function renderResults(d) {
     ${fr('QCBS Based', ef.isQCBS === true ? 'Yes' : ef.isQCBS === false ? 'No' : null)}
     ${fr('Min. Qualifying Score (Technical)', ef.minimumTechnicalScore ? ef.minimumTechnicalScore + ' points' : null, 'urgent')}
   `;
-  if (ef.isQCBS && (ef.technicalWeight || ef.financialWeight)) {
+  // Show weight boxes whenever weights are present — not only for QCBS.
+  // Many RFPs use "Weighted Scoring Method" without calling it QCBS.
+  if (ef.technicalWeight || ef.financialWeight) {
     evalHtml += `<div class="weights-display">
       <div class="weight-box tech"><div class="wb-pct">${ef.technicalWeight ?? '?'}%</div><div class="wb-label">Technical</div></div>
       <div class="weight-box fin"><div class="wb-pct">${ef.financialWeight ?? '?'}%</div><div class="wb-label">Financial</div></div>
