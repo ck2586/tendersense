@@ -150,12 +150,72 @@ const COMBINE_ARRAYS = new Set([
 
 function mergeResults(results) {
   if (!results || results.length === 0) return {};
-  if (results.length === 1) return results[0];
+  if (results.length === 1) return cleanupMerged(results[0]);
   let merged = JSON.parse(JSON.stringify(results[0]));
   for (let i = 1; i < results.length; i++) {
     merged = mergeDeep(merged, results[i]);
   }
-  return merged;
+  return cleanupMerged(merged);
+}
+
+// ─────────────────────────────────────────────────────────────
+// Post-merge cleanup — fixes two multi-chunk artefacts:
+//
+//  1. scopeOfWork duplicates: same component extracted from
+//     multiple chunks with slightly different wording.
+//     Strategy: keep ONE entry per "Component N" — the longest
+//     (most detailed) string wins.
+//
+//  2. Promoted sub-criteria: a sub-criterion like "3.2" may
+//     appear both inside criterion "3".subCriteria AND as a
+//     separate top-level entry (from a different chunk).
+//     Strategy: remove any top-level criterion whose number
+//     contains a "." AND whose parent number already exists.
+// ─────────────────────────────────────────────────────────────
+function cleanupMerged(data) {
+  // --- 1. Deduplicate scopeOfWork by component number ----------
+  const sow = data && data.tenderOverview && data.tenderOverview.scopeOfWork;
+  if (Array.isArray(sow)) {
+    const compMap = new Map(); // "1" → best string
+    const others  = [];
+    for (const item of sow) {
+      if (typeof item !== 'string') { others.push(item); continue; }
+      const m = item.match(/^Component\s+(\d+)\s*[:\-]/i);
+      if (m) {
+        const num = m[1];
+        const prev = compMap.get(num);
+        // Keep the most detailed entry (longest string)
+        if (!prev || item.length > prev.length) compMap.set(num, item);
+      } else {
+        // Non-component string — keep only once (exact dedup)
+        if (!others.includes(item)) others.push(item);
+      }
+    }
+    // Reassemble sorted by component number
+    const sorted = [...compMap.entries()]
+      .sort((a, b) => parseInt(a[0]) - parseInt(b[0]))
+      .map(e => e[1]);
+    data.tenderOverview.scopeOfWork = [...sorted, ...others];
+  }
+
+  // --- 2. Remove promoted sub-criteria from top-level ----------
+  const crit = data && data.evaluationFramework && data.evaluationFramework.technicalEvaluationCriteria;
+  if (Array.isArray(crit)) {
+    // Collect numbers that are genuine top-level (no "." in number)
+    const topNums = new Set(
+      crit
+        .filter(c => !String(c.criterionNumber || '').includes('.'))
+        .map(c => String(c.criterionNumber || ''))
+    );
+    data.evaluationFramework.technicalEvaluationCriteria = crit.filter(c => {
+      const num = String(c.criterionNumber || '');
+      if (!num.includes('.')) return true;        // plain integer — top-level
+      const parent = num.split('.')[0];
+      return !topNums.has(parent);               // remove if parent present
+    });
+  }
+
+  return data;
 }
 
 function countData(arr) {
