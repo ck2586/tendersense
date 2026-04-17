@@ -953,7 +953,21 @@ function renderResults(d) {
   `);
 
   // ---- EVAL CRITERIA TABLE ----
-  const criteria = ef.technicalEvaluationCriteria || [];
+  // Defensive render-time filter: remove any criterion whose criterionNumber
+  // contains a "." (e.g. "3.2") when its parent (e.g. "3") is already in the
+  // list. This prevents double-counting when sub-criteria are accidentally
+  // promoted to top-level rows by multi-chunk extraction.
+  const rawCriteria = ef.technicalEvaluationCriteria || [];
+  const topLevelNums = new Set(
+    rawCriteria
+      .filter(c => !String(c.criterionNumber || '').includes('.'))
+      .map(c => String(c.criterionNumber || ''))
+  );
+  const criteria = rawCriteria.filter(c => {
+    const num = String(c.criterionNumber || '');
+    if (!num.includes('.')) return true;
+    return !topLevelNums.has(num.split('.')[0]);
+  });
   if (criteria.length > 0) {
     const total = criteria.reduce((s,c) => s + (parseFloat(c.maxScore)||0), 0);
     let rows = criteria.map(c => {
@@ -1174,10 +1188,15 @@ function exportToWord() {
   }
   function head(t) { return `<h2 style="font-family:Calibri,sans-serif;color:#1a3558;font-size:14pt;margin:20px 0 8px;border-bottom:2px solid #f59e0b;padding-bottom:4px;">${t}</h2>`; }
 
-  const criteriaHtml = (ef.technicalEvaluationCriteria||[]).length > 0 ?
+  // Filter promoted sub-criteria from Word export too
+  const rawCritW = ef.technicalEvaluationCriteria || [];
+  const topNumsW = new Set(rawCritW.filter(c=>!String(c.criterionNumber||'').includes('.')).map(c=>String(c.criterionNumber||'')));
+  const filtCritW = rawCritW.filter(c=>{ const n=String(c.criterionNumber||''); return !n.includes('.')||!topNumsW.has(n.split('.')[0]); });
+
+  const criteriaHtml = filtCritW.length > 0 ?
     `<table style="width:100%;border-collapse:collapse;font-size:11pt;">
       <tr style="background:#1a3558;color:white;"><th style="padding:8px;border:1px solid #ddd;">Criterion</th><th style="padding:8px;border:1px solid #ddd;">Sub-criteria</th><th style="padding:8px;text-align:center;border:1px solid #ddd;">Max Score</th></tr>
-      ${(ef.technicalEvaluationCriteria||[]).map(c => `<tr>
+      ${filtCritW.map(c => `<tr>
         <td style="padding:7px 8px;border:1px solid #ddd;font-weight:600;">${c.criterion||''}</td>
         <td style="padding:7px 8px;border:1px solid #ddd;font-size:10pt;">${(c.subCriteria||[]).map(s => `${s.name}: ${s.score||'?'}`).join(' | ') || (c.description||'')}</td>
         <td style="padding:7px 8px;border:1px solid #ddd;text-align:center;font-weight:700;">${c.maxScore||''}</td>
