@@ -1,9 +1,12 @@
-// v12 — Full-document chunked extraction with:
-//   - Explicit schema examples for ALL array types (criteria, deliverables, team, scope)
-//   - Detailed scopeOfWork: "Component N: Title — sub-item1; sub-item2" format
-//   - Combine-merge for arrays that span multiple pages/chunks
-//   - 2400 max_tokens per chunk, 15000-char chunks, 8s inter-chunk delay
-//   - Retry with Groq-reported wait time on rate-limit errors
+// v13 — Rate limit hardening on top of v12:
+//   - Inter-chunk delay increased 8s → 12s (handles 5-6 chunk documents)
+//   - Max retry attempts increased 3 → 5
+//   - Retry buffer increased 500ms → 1000ms after Groq-reported wait time
+//   - All v12 features retained:
+//       Explicit schema examples for all array types
+//       Detailed scopeOfWork "Component N: Title — sub-items" format
+//       Combine-merge + post-merge cleanup (dedup scope, filter promoted sub-criteria)
+//       2400 max_tokens per chunk, 15000-char chunks
 
 module.exports = async function handler(req, res) {
 
@@ -40,7 +43,7 @@ module.exports = async function handler(req, res) {
 
   const chunkResults = [];
   for (let i = 0; i < chunks.length; i++) {
-    if (i > 0) await sleep(8000);
+    if (i > 0) await sleep(12000);
     let attempts = 0;
     while (true) {
       try {
@@ -50,8 +53,8 @@ module.exports = async function handler(req, res) {
       } catch (err) {
         attempts++;
         const waitMs = parseRetryAfter(err.message);
-        if (attempts < 3 && waitMs > 0) {
-          await sleep(waitMs + 500);
+        if (attempts < 5 && waitMs > 0) {
+          await sleep(waitMs + 1000);
         } else {
           return res.status(500).json({ error: `Chunk ${i + 1}/${chunks.length} failed after ${attempts} attempts: ${err.message}` });
         }
